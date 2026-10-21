@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     otp_expire_minutes: int = 5
     otp_resend_cooldown_seconds: int = 60
     otp_max_attempts: int = 5
+    
+    admin_email: str
 
     model_config = SettingsConfigDict(
         env_file=".env",
