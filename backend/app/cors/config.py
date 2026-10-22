@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     otp_resend_cooldown_seconds: int = 60
     otp_max_attempts: int = 5
     
+    cloudinary_cloud_name: str
+    cloudinary_api_key: str
+    cloudinary_api_secret: str
+    
     admin_email: str
 
     model_config = SettingsConfigDict(
