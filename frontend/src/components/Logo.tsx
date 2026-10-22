@@ -2,21 +2,28 @@
 import logo from '../assets/telugu-front-logo.jpeg'
 
 type LogoProps = {
-  className?: string
+  collapsed?: boolean
 }
 
-export default function Logo({ className = '' }: LogoProps) {
+export default function Logo({ collapsed = false }: LogoProps) {
   return (
-    <div className={`flex items-center gap-3 ${className}`}>
+    <div className="flex w-full items-center gap-3 overflow-hidden">
       <img
         src={logo}
-        alt="Telugu Front logo"
-        className="h-14 w-14 shrink-0 rounded-full object-contain sm:h-16 sm:w-16"
+        alt="Telugu Front"
+        className="h-11 w-11 shrink-0 rounded-full bg-white object-contain"
       />
 
-      <span className="text-xl font-extrabold tracking-tight text-[#101B2C] sm:text-2xl">
-        Telugu <span className="text-[#C32632]">Front</span>
-      </span>
+      {!collapsed && (
+        <div className="min-w-0">
+          <p className="whitespace-nowrap text-[18px] font-bold leading-tight tracking-tight text-white">
+            Telugu <span className="text-[#EF3340]">Front</span>
+          </p>
+          <p className="mt-1 whitespace-nowrap text-[9px] font-medium tracking-[0.24em] text-slate-300">
+            ADMIN PORTAL
+          </p>
+        </div>
+      )}
     </div>
   )
 }
