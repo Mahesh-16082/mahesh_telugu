@@ -11,6 +11,7 @@ from app.cors.database import Base
 from app.models.user import User
 from app.models.email_login_otp import EmailLoginOTP
 from app.models.post import Post
+from app.models.categories import Category  # noqa: F401
 config = context.config
 
 if config.config_file_name is not None:

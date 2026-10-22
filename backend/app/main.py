@@ -10,6 +10,7 @@ from app.cors.database import SessionLocal
 from app.models.user import User
 from app.routers.auth import router as auth_router
 from app.routers.posts import router as posts_router
+from app.routers.categories import router as categories_router
 
 
 def bootstrap_admin() -> None:
@@ -59,6 +60,7 @@ app.add_middleware(
 )
 app.include_router(auth_router)
 app.include_router(posts_router)
+app.include_router(categories_router)
 
 @app.get("/")
 def root():
