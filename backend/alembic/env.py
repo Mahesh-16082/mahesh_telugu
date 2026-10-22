@@ -10,7 +10,7 @@ from app.cors.database import Base
 # Import models to register their tables with SQLAlchemy metadata.
 from app.models.user import User
 from app.models.email_login_otp import EmailLoginOTP
-
+from app.models.post import Post
 config = context.config
 
 if config.config_file_name is not None:
