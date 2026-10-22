@@ -3,6 +3,8 @@ import { useState } from 'react'
 import type { ReactNode } from 'react'
 import dashboardBanner from '../assets/dashboard-banner.png'
 import Logo from '../components/Logo'
+import Categories from './Categories'
+import DeletedCategories from './DeletedCategories'
 
 type IconProps = {
   name: string
@@ -131,8 +133,14 @@ export default function Dashboard() {
     },
   ]
 
-  function navigate(label: string) {
-    setActive(label)
+  function navigate(label: string, parent?: string) {
+    if (label === 'Trash' && parent === 'Categories') {
+      setActive('Category Trash')
+    } else if (label === 'Trash' && parent === 'Posts') {
+      setActive('Posts Trash')
+    } else {
+      setActive(label)
+    }
     setMobileMenu(false)
   }
 
@@ -196,9 +204,11 @@ export default function Dashboard() {
                     <button
                       type="button"
                       key={`${item.label}-${child}`}
-                      onClick={() => navigate(child)}
+                      onClick={() => navigate(child, item.label)}
                       className={`block w-full rounded-md px-3 py-2.5 text-left text-xs ${
-                        active === child
+                        active === child ||
+                        (child === 'Trash' &&
+                          active === (item.label === 'Categories' ? 'Category Trash' : 'Posts Trash'))
                           ? 'bg-white/10 font-semibold text-white'
                           : 'text-slate-300 hover:text-white'
                       }`}
@@ -296,6 +306,26 @@ export default function Dashboard() {
         </header>
 
         <main className="min-w-0 space-y-4 p-3 sm:p-4">
+          {active === 'All Categories' ? (
+            <Categories />
+          ) : active === 'Category Trash' ? (
+            <DeletedCategories />
+          ) : active === 'Posts Trash' ? (
+            <section className="rounded-xl border border-slate-200 bg-white p-6">
+              <h1 className="text-xl font-bold text-[#10243D]">Deleted Posts</h1>
+              <p className="mt-2 text-sm text-slate-500">
+                The deleted posts page has not been connected yet.
+              </p>
+            </section>
+          ) : active !== 'Dashboard' ? (
+            <section className="rounded-xl border border-slate-200 bg-white p-6">
+              <h1 className="text-xl font-bold text-[#10243D]">{active}</h1>
+              <p className="mt-2 text-sm text-slate-500">
+                This module will be connected next.
+              </p>
+            </section>
+          ) : (
+            <>
           {/* Welcome banner */}
           <section
             className="relative flex h-[182px] items-center overflow-hidden rounded-xl bg-cover bg-center px-5 py-4 sm:px-6"
@@ -448,6 +478,8 @@ export default function Dashboard() {
               </div>
             </Panel>
           </section>
+            </>
+          )}
         </main>
       </div>
     </div>

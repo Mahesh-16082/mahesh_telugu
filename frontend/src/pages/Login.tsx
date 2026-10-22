@@ -272,7 +272,11 @@ export default function Login() {
       {/* RIGHT: LOGIN CARD */}
       <section className="flex min-h-[680px] items-center justify-center bg-[#F5F8FC] px-4 py-10 sm:px-8 lg:min-h-screen lg:px-10 xl:px-14">
         <div className="w-full max-w-[590px] rounded-2xl border border-[#E5E8ED] bg-white/95 px-6 py-9 shadow-[0_20px_65px_rgba(16,35,61,0.08)] sm:px-10 sm:py-12 lg:px-10 xl:px-12">
-          <Logo className="mx-auto justify-center" />
+            <div className="mx-auto flex w-full justify-center">
+              <div className="w-full max-w-xs">
+                <Logo />
+              </div>
+            </div>
 
           {step === 'email' ? (
             <>
