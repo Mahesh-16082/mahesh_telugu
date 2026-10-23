@@ -1,4 +1,5 @@
-import { useState } from 'react'
+
+import { useEffect, useState } from 'react'
 import Logo from './Logo'
 
 type SidebarProps = {
@@ -60,23 +61,6 @@ function MenuIcon({ name }: { name: string }) {
   )
 }
 
-function CloseIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="2"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      className="h-5 w-5"
-      aria-hidden="true"
-    >
-      <path d="M18 6 6 18 M6 6l12 12" />
-    </svg>
-  )
-}
-
 export default function Sidebar({
   active,
   onNavigate,
@@ -88,6 +72,23 @@ export default function Sidebar({
     'Categories',
   ])
 
+  // Close the mobile sidebar when Escape is pressed.
+  useEffect(() => {
+    if (!mobileOpen) return
+
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') {
+        onCloseMobile()
+      }
+    }
+
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [mobileOpen, onCloseMobile])
+
   function toggleGroup(label: string) {
     setExpanded((current) =>
       current.includes(label)
@@ -96,88 +97,87 @@ export default function Sidebar({
     )
   }
 
-  function handleNavigate(child: string, parent: string) {
-    if (child === 'Trash') {
-      onNavigate(
-        parent === 'Categories' ? 'Category Trash' : 'Posts Trash',
-      )
-    } else {
-      onNavigate(child)
-    }
-
+  function handleNavigate(page: string) {
+    onNavigate(page)
     onCloseMobile()
-  }
-
-  function isChildActive(child: string, parent: string) {
-    if (child === 'Trash') {
-      return (
-        (parent === 'Categories' && active === 'Category Trash') ||
-        (parent === 'Posts' && active === 'Posts Trash')
-      )
-    }
-
-    return active === child
   }
 
   return (
     <>
-      {/* Mobile backdrop: tap outside the sidebar to close it */}
+      {/* Mobile backdrop */}
       {mobileOpen && (
         <button
           type="button"
           aria-label="Close navigation overlay"
           onClick={onCloseMobile}
-          className="fixed inset-0 z-30 bg-black/40 lg:hidden"
+          className="fixed inset-0 z-40 bg-slate-950/45 backdrop-blur-[1px] lg:hidden"
         />
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar drawer */}
       <aside
         id="admin-sidebar"
-        aria-label="Admin sidebar"
-        className={`fixed inset-y-0 left-0 z-40 flex w-[260px] flex-col bg-[#10243D] text-white transition-transform duration-200 ease-in-out lg:translate-x-0 ${
+        aria-label="Admin navigation"
+        className={`fixed inset-y-0 left-0 z-50 flex h-dvh w-[min(260px,85vw)] flex-col overflow-hidden bg-[#10243D] text-white shadow-xl transition-transform duration-200 ease-in-out lg:w-[260px] lg:translate-x-0 lg:shadow-none ${
           mobileOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
-        {/* Logo and mobile close button */}
-        <div className="flex h-[72px] shrink-0 items-center justify-between border-b border-white/10 px-5">
-          <Logo />
+        {/* Logo and close button */}
+        <div className="flex h-[72px] shrink-0 items-center justify-between gap-2 border-b border-white/10 px-4 sm:px-5">
+          <div className="min-w-0 flex-1 overflow-hidden">
+            <Logo />
+          </div>
 
           <button
             type="button"
             onClick={onCloseMobile}
             aria-label="Close sidebar"
-            className="ml-2 shrink-0 rounded-lg p-2 text-slate-300 transition hover:bg-white/10 hover:text-white lg:hidden"
+            title="Close sidebar"
+            className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-slate-300 transition-colors hover:bg-white/10 hover:text-white focus:outline-none focus:ring-2 focus:ring-white/50 lg:hidden"
           >
-            <CloseIcon />
+            <svg
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="h-5 w-5"
+              aria-hidden="true"
+            >
+              <path d="M18 6 6 18 M6 6l12 12" />
+            </svg>
           </button>
         </div>
 
-        {/* Navigation with hidden scrollbar */}
+        {/* Navigation menu */}
         <nav
-          className="sidebar-nav min-h-0 flex-1 space-y-2 overflow-y-auto px-3 py-4"
+          className="min-h-0 flex-1 space-y-2 overflow-y-auto overscroll-contain px-3 py-4 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
           aria-label="Main navigation"
         >
           {menuItems.map((item) => {
-            const isActive = active === item.label
+            const isActive =
+              active === item.label ||
+              (item.label === 'Posts' &&
+                ['All Posts', 'Drafts', 'Published', 'Posts Trash'].includes(
+                  active,
+                )) ||
+              (item.label === 'Categories' &&
+                ['All Categories', 'Category Trash'].includes(active))
+
             const isExpanded = expanded.includes(item.label)
 
             return (
               <div key={item.label}>
                 <button
                   type="button"
-                  onClick={() => {
-                    if (item.children) {
-                      toggleGroup(item.label)
-                    } else {
-                      onNavigate(item.label)
-                      onCloseMobile()
-                    }
-                  }}
-                  aria-expanded={
-                    item.children ? isExpanded : undefined
+                  onClick={() =>
+                    item.children
+                      ? toggleGroup(item.label)
+                      : handleNavigate(item.label)
                   }
-                  className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm transition-colors ${
+                  aria-expanded={item.children ? isExpanded : undefined}
+                  className={`flex min-h-12 w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm transition-colors ${
                     isActive
                       ? 'bg-[#D9273B] font-semibold text-white shadow-md'
                       : 'text-slate-200 hover:bg-white/10'
@@ -185,7 +185,9 @@ export default function Sidebar({
                 >
                   <MenuIcon name={item.icon} />
 
-                  <span className="flex-1">{item.label}</span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {item.label}
+                  </span>
 
                   {item.children && (
                     <svg
@@ -195,8 +197,8 @@ export default function Sidebar({
                       strokeWidth="2"
                       strokeLinecap="round"
                       strokeLinejoin="round"
-                      className={`h-4 w-4 shrink-0 transition-transform duration-200 ${
-                        isExpanded ? 'rotate-180' : 'rotate-0'
+                      className={`h-4 w-4 shrink-0 transition-transform ${
+                        isExpanded ? 'rotate-180' : ''
                       }`}
                       aria-hidden="true"
                     >
@@ -205,72 +207,39 @@ export default function Sidebar({
                   )}
                 </button>
 
-                {/* Dropdown children */}
                 {item.children && isExpanded && (
                   <div className="ml-7 mt-1 space-y-1 border-l border-white/15 pl-3">
-                    {item.children.map((child) => (
-                      <button
-                        type="button"
-                        key={`${item.label}-${child}`}
-                        onClick={() =>
-                          handleNavigate(child, item.label)
-                        }
-                        className={`block w-full rounded-md px-3 py-2.5 text-left text-xs transition-colors ${
-                          isChildActive(child, item.label)
-                            ? 'bg-white/10 font-semibold text-white'
-                            : 'text-slate-300 hover:bg-white/5 hover:text-white'
-                        }`}
-                      >
-                        {child}
-                      </button>
-                    ))}
+                    {item.children.map((child) => {
+                      const page =
+                        child === 'Trash'
+                          ? item.label === 'Categories'
+                            ? 'Category Trash'
+                            : 'Posts Trash'
+                          : child
+
+                      const selected = active === page
+
+                      return (
+                        <button
+                          key={`${item.label}-${child}`}
+                          type="button"
+                          onClick={() => handleNavigate(page)}
+                          className={`block min-h-10 w-full rounded-md px-3 py-2.5 text-left text-xs transition-colors ${
+                            selected
+                              ? 'bg-white/10 font-semibold text-white'
+                              : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                          }`}
+                        >
+                          {child}
+                        </button>
+                      )
+                    })}
                   </div>
                 )}
               </div>
             )
           })}
         </nav>
-
-        {/* Fixed administrator section */}
-        <div className="shrink-0 border-t border-white/10 p-4">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-600 font-bold">
-              A
-            </div>
-
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">
-                Administrator
-              </p>
-              <p className="text-xs text-slate-400">Admin Portal</p>
-            </div>
-
-            <button
-              type="button"
-              title="Sign out"
-              aria-label="Sign out"
-              onClick={() => {
-                sessionStorage.removeItem('access_token')
-                sessionStorage.removeItem('token_type')
-                window.location.assign('/')
-              }}
-              className="shrink-0 rounded-md p-2 text-slate-300 transition hover:bg-white/10 hover:text-white"
-            >
-              <svg
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.8"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                className="h-5 w-5"
-                aria-hidden="true"
-              >
-                <path d="M10 17l5-5-5-5 M15 12H3 M21 4v16" />
-              </svg>
-            </button>
-          </div>
-        </div>
       </aside>
     </>
   )
