@@ -1,4 +1,3 @@
-
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import dashboardBanner from '../assets/dashboard-banner.png'
@@ -6,9 +5,14 @@ import Sidebar from '../components/Sidebar'
 import Topbar from '../components/Topbar'
 import Categories from './Categories'
 import DeletedCategories from './DeletedCategories'
+import Posts from './Posts'
+import DeletedPosts from './DeletedPosts'
 import Profile from './Profile'
 import { getMyProfile } from '../services/profile'
 import type { AdminProfile } from '../services/profile'
+import { getRecentPosts, getStatusCounts } from '../services/posts'
+import type { Post, PostStatusCounts } from '../services/posts'
+import { getCategories } from '../services/categories'
 
 type IconProps = {
   name: string
@@ -51,10 +55,12 @@ function Icon({ name, className = 'h-5 w-5' }: IconProps) {
 function Panel({
   title,
   action,
+  onAction,
   children,
 }: {
   title: string
   action?: string
+  onAction?: () => void
   children: ReactNode
 }) {
   return (
@@ -64,6 +70,7 @@ function Panel({
         {action && (
           <button
             type="button"
+            onClick={onAction}
             className="text-xs font-semibold text-[#D9273B] hover:underline"
           >
             {action} →
@@ -86,12 +93,28 @@ function EmptyState({ text }: { text: string }) {
   )
 }
 
+function formatDate(value?: string | null): string {
+  if (!value) return '—'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return '—'
+  return new Intl.DateTimeFormat('en-IN', {
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
+  }).format(date)
+}
+
 export default function Dashboard() {
   const [active, setActive] = useState('Dashboard')
   const [mobileMenu, setMobileMenu] = useState(false)
   const [search, setSearch] = useState('')
   const [period, setPeriod] = useState('Last 7 Days')
   const [adminProfile, setAdminProfile] = useState<AdminProfile | null>(null)
+
+  // Live dashboard data
+  const [statusCounts, setStatusCounts] = useState<PostStatusCounts | null>(null)
+  const [totalCategories, setTotalCategories] = useState<number | null>(null)
+  const [recentPosts, setRecentPosts] = useState<Post[]>([])
 
   useEffect(() => {
     let cancelled = false
@@ -105,12 +128,36 @@ export default function Dashboard() {
       }
     }
 
+    async function loadDashboardStats() {
+      try {
+        const counts = await getStatusCounts()
+        if (!cancelled) setStatusCounts(counts)
+      } catch {
+        // Silent catch
+      }
+
+      try {
+        const catRes = await getCategories({ page: 1, page_size: 1 })
+        if (!cancelled) setTotalCategories(catRes.total)
+      } catch {
+        // Silent catch
+      }
+
+      try {
+        const recent = await getRecentPosts(5)
+        if (!cancelled) setRecentPosts(recent)
+      } catch {
+        // Silent catch
+      }
+    }
+
     void loadAdminProfile()
+    void loadDashboardStats()
 
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [active])
 
   const administratorName =
     adminProfile?.full_name?.trim() ||
@@ -121,24 +168,32 @@ export default function Dashboard() {
   const statistics = [
     {
       title: 'Total Posts',
+      value: statusCounts !== null ? statusCounts.all : '—',
+      caption: statusCounts !== null ? `${statusCounts.all} active posts` : 'Awaiting data',
       icon: 'posts',
       iconClass: 'bg-rose-100 text-rose-600',
       cardClass: 'bg-[#FFF5F6]',
     },
     {
       title: 'Published Posts',
+      value: statusCounts !== null ? statusCounts.published : '—',
+      caption: statusCounts !== null ? `${statusCounts.published} live on site` : 'Awaiting data',
       icon: 'check',
       iconClass: 'bg-emerald-100 text-emerald-600',
       cardClass: 'bg-[#EFFBF4]',
     },
     {
       title: 'Draft Posts',
+      value: statusCounts !== null ? statusCounts.draft : '—',
+      caption: statusCounts !== null ? `${statusCounts.draft} in progress` : 'Awaiting data',
       icon: 'edit',
       iconClass: 'bg-amber-100 text-amber-600',
       cardClass: 'bg-[#FFFBEE]',
     },
     {
       title: 'Total Categories',
+      value: totalCategories !== null ? totalCategories : '—',
+      caption: totalCategories !== null ? `${totalCategories} categories` : 'Awaiting data',
       icon: 'folder',
       iconClass: 'bg-violet-100 text-violet-600',
       cardClass: 'bg-[#F7F3FF]',
@@ -164,7 +219,6 @@ export default function Dashboard() {
         onNavigate={navigate}
         mobileOpen={mobileMenu}
         onCloseMobile={() => setMobileMenu(false)}
-        
       />
 
       {/* Main application area */}
@@ -188,15 +242,14 @@ export default function Dashboard() {
             <Categories />
           ) : active === 'Category Trash' ? (
             <DeletedCategories />
+          ) : active === 'All Posts' ? (
+            <Posts mode="all" onNavigate={navigate} />
+          ) : active === 'Drafts' ? (
+            <Posts mode="drafts" onNavigate={navigate} />
+          ) : active === 'Published' ? (
+            <Posts mode="published" onNavigate={navigate} />
           ) : active === 'Posts Trash' ? (
-            <section className="rounded-xl border border-slate-200 bg-white p-6">
-              <h1 className="text-xl font-bold text-[#10243D]">
-                Deleted Posts
-              </h1>
-              <p className="mt-2 text-sm text-slate-500">
-                The deleted posts page has not been connected yet.
-              </p>
-            </section>
+            <DeletedPosts />
           ) : active === 'Profile information' ? (
             <Profile onBack={() => setActive('Dashboard')} />
           ) : active !== 'Dashboard' ? (
@@ -257,10 +310,10 @@ export default function Dashboard() {
                         {stat.title}
                       </p>
                       <p className="mt-1 text-2xl font-extrabold text-[#10243D]">
-                        —
+                        {stat.value}
                       </p>
                       <p className="text-[10px] text-slate-500">
-                        Awaiting backend data
+                        {stat.caption}
                       </p>
                     </div>
                   </article>
@@ -269,7 +322,11 @@ export default function Dashboard() {
 
               {/* Recent Posts and Breaking News */}
               <section className="grid min-w-0 grid-cols-1 gap-4 2xl:grid-cols-[1.55fr_1fr]">
-                <Panel title="Recent Posts" action="View All">
+                <Panel
+                  title="Recent Posts"
+                  action="View All"
+                  onAction={() => setActive('All Posts')}
+                >
                   <div className="overflow-x-auto">
                     <table className="w-full min-w-[540px] text-left text-xs">
                       <thead className="bg-[#F0F4F9] text-slate-600">
@@ -278,21 +335,68 @@ export default function Dashboard() {
                           <th className="px-3 py-3 font-semibold">Category</th>
                           <th className="px-3 py-3 font-semibold">Status</th>
                           <th className="px-3 py-3 font-semibold">Date</th>
-                          <th className="px-3 py-3 font-semibold">Actions</th>
+                          <th className="px-3 py-3 text-right font-semibold">Actions</th>
                         </tr>
                       </thead>
                       <tbody>
-                        <tr>
-                          <td colSpan={5}>
-                            <EmptyState text="Your latest posts will appear here after the posts API is connected." />
-                          </td>
-                        </tr>
+                        {recentPosts.length === 0 ? (
+                          <tr>
+                            <td colSpan={5}>
+                              <EmptyState text="No posts yet. Click 'Create New Post' below to add your first article." />
+                            </td>
+                          </tr>
+                        ) : (
+                          recentPosts.map((post) => (
+                            <tr
+                              key={post.id}
+                              className="border-b border-slate-50 transition-colors hover:bg-slate-50/50"
+                            >
+                              <td className="max-w-[200px] truncate px-3 py-2.5 font-semibold text-[#10243D]">
+                                {post.title}
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-600">
+                                {post.category?.name || 'Uncategorized'}
+                              </td>
+                              <td className="px-3 py-2.5">
+                                <span
+                                  className={`rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                                    post.status === 'PUBLISHED'
+                                      ? 'bg-emerald-100 text-emerald-700'
+                                      : 'bg-amber-100 text-amber-700'
+                                  }`}
+                                >
+                                  {post.status}
+                                </span>
+                              </td>
+                              <td className="px-3 py-2.5 text-slate-500">
+                                {formatDate(
+                                  post.status === 'PUBLISHED'
+                                    ? post.published_at
+                                    : post.created_at,
+                                )}
+                              </td>
+                              <td className="px-3 py-2.5 text-right">
+                                <button
+                                  type="button"
+                                  onClick={() => setActive('All Posts')}
+                                  className="text-xs font-semibold text-[#D9273B] hover:underline"
+                                >
+                                  Manage →
+                                </button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
                       </tbody>
                     </table>
                   </div>
                 </Panel>
 
-                <Panel title="Breaking News" action="View All">
+                <Panel
+                  title="Breaking News"
+                  action="View All"
+                  onAction={() => setActive('Breaking News')}
+                >
                   <EmptyState text="Breaking news from your backend will appear here." />
                 </Panel>
               </section>
@@ -314,13 +418,50 @@ export default function Dashboard() {
                       <option>Last 90 Days</option>
                     </select>
                   </div>
-                  <EmptyState
-                    text={`Activity for ${period.toLowerCase()} will appear here.`}
-                  />
+                  <div className="p-5 text-center">
+                    <div className="text-2xl font-extrabold text-[#10243D]">
+                      {statusCounts?.all ?? 0}
+                    </div>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Total active articles published or drafted
+                    </p>
+                  </div>
                 </Panel>
 
                 <Panel title="Posts by Status">
-                  <EmptyState text="Published, draft, and trash counts will appear here." />
+                  {statusCounts ? (
+                    <div className="space-y-3 p-4 text-xs">
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-2 font-medium text-emerald-700">
+                          <span className="h-2.5 w-2.5 rounded-full bg-emerald-500" />
+                          Published
+                        </span>
+                        <span className="font-bold text-[#10243D]">
+                          {statusCounts.published}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-2 font-medium text-amber-700">
+                          <span className="h-2.5 w-2.5 rounded-full bg-amber-500" />
+                          Drafts
+                        </span>
+                        <span className="font-bold text-[#10243D]">
+                          {statusCounts.draft}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-2 font-medium text-rose-700">
+                          <span className="h-2.5 w-2.5 rounded-full bg-rose-500" />
+                          Trash
+                        </span>
+                        <span className="font-bold text-[#10243D]">
+                          {statusCounts.trash}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <EmptyState text="Published, draft, and trash counts will appear here." />
+                  )}
                 </Panel>
 
                 <Panel title="Quick Actions">

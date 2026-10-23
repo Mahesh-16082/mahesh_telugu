@@ -3,7 +3,7 @@ const API_BASE_URL = (
 ).replace(/\/+$/, "");
 
 type ApiRequestOptions = {
-  method?: "GET" | "POST" | "PATCH" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   headers?: HeadersInit;
 };
@@ -18,7 +18,9 @@ async function request<T>(
   const headers = new Headers(options.headers);
   headers.set("Accept", "application/json");
 
-  if (options.body !== undefined) {
+  const isFormData = typeof FormData !== "undefined" && options.body instanceof FormData;
+
+  if (options.body !== undefined && !isFormData) {
     headers.set("Content-Type", "application/json");
   }
 
@@ -34,7 +36,9 @@ async function request<T>(
       headers,
       body:
         options.body !== undefined
-          ? JSON.stringify(options.body)
+          ? isFormData
+            ? (options.body as FormData)
+            : JSON.stringify(options.body)
           : undefined,
     });
   } catch {
@@ -81,7 +85,7 @@ function buildQuery(params?: Record<string, string | number | boolean | undefine
   const query = new URLSearchParams();
 
   Object.entries(params || {}).forEach(([key, value]) => {
-    if (value !== undefined) {
+    if (value !== undefined && value !== null && value !== "") {
       query.set(key, String(value));
     }
   });
@@ -102,12 +106,40 @@ export const api = {
     return request<T>(path, { method: "POST", body });
   },
 
+  put<T>(path: string, body?: unknown) {
+    return request<T>(path, { method: "PUT", body });
+  },
+
   patch<T>(path: string, body: unknown) {
     return request<T>(path, { method: "PATCH", body });
   },
 
   delete<T = void>(path: string) {
     return request<T>(path, { method: "DELETE" });
+  },
+
+  upload<T>(path: string, formData: FormData) {
+    return request<T>(path, { method: "POST", body: formData });
+  },
+
+  async download(
+    path: string,
+    params?: Record<string, string | number | boolean | undefined>,
+  ): Promise<Blob> {
+    const token = sessionStorage.getItem("access_token");
+    const tokenType = sessionStorage.getItem("token_type") || "Bearer";
+    const headers = new Headers();
+    if (token) {
+      headers.set("Authorization", `${tokenType} ${token}`);
+    }
+    const response = await fetch(`${API_BASE_URL}${path}${buildQuery(params)}`, {
+      method: "GET",
+      headers,
+    });
+    if (!response.ok) {
+      throw new Error(`Download failed (${response.status})`);
+    }
+    return response.blob();
   },
 };
 
