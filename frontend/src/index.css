@@ -31,3 +31,12 @@ button,
 input {
   font: inherit;
 }
+/* Hide the sidebar scrollbar without disabling scrolling */
+.sidebar-nav {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.sidebar-nav::-webkit-scrollbar {
+  display: none;
+}

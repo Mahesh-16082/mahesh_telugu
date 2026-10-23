@@ -2,7 +2,8 @@
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import dashboardBanner from '../assets/dashboard-banner.png'
-import Logo from '../components/Logo'
+import Sidebar from '../components/Sidebar'
+import Topbar from '../components/Topbar'
 import Categories from './Categories'
 import DeletedCategories from './DeletedCategories'
 
@@ -44,23 +45,6 @@ function Icon({ name, className = 'h-5 w-5' }: IconProps) {
   )
 }
 
-const menuItems = [
-  { label: 'Dashboard', icon: 'dashboard' },
-  {
-    label: 'Posts',
-    icon: 'posts',
-    children: ['All Posts', 'Drafts', 'Published', 'Trash'],
-  },
-  {
-    label: 'Categories',
-    icon: 'categories',
-    children: ['All Categories', 'Trash'],
-  },
-  { label: 'Breaking News', icon: 'breaking' },
-  { label: 'Cards', icon: 'cards' },
-  { label: 'Advertisements', icon: 'ads' },
-]
-
 function Panel({
   title,
   action,
@@ -101,7 +85,6 @@ function EmptyState({ text }: { text: string }) {
 
 export default function Dashboard() {
   const [active, setActive] = useState('Dashboard')
-  const [expanded, setExpanded] = useState(['Posts', 'Categories'])
   const [mobileMenu, setMobileMenu] = useState(false)
   const [search, setSearch] = useState('')
   const [period, setPeriod] = useState('Last 7 Days')
@@ -144,166 +127,25 @@ export default function Dashboard() {
     setMobileMenu(false)
   }
 
-  function toggleGroup(label: string) {
-    setExpanded((previous) =>
-      previous.includes(label)
-        ? previous.filter((item) => item !== label)
-        : [...previous, label],
-    )
-  }
+
 
   return (
     <div className="min-h-screen bg-[#F2F5FA] text-[#17243B]">
-      {mobileMenu && (
-        <button
-          type="button"
-          aria-label="Close navigation"
-          onClick={() => setMobileMenu(false)}
-          className="fixed inset-0 z-30 bg-black/40 md:hidden"
-        />
-      )}
-
-      {/* Sidebar */}
-      <aside
-        className={`fixed inset-y-0 left-0 z-40 flex w-[260px] flex-col bg-[#10243D] text-white transition-transform duration-200 ${
-          mobileMenu ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
-        }`}
-      >
-        <div className="flex h-[72px] shrink-0 items-center border-b border-white/10 px-5">
-          <Logo />
-        </div>
-
-        <nav className="flex-1 space-y-2 overflow-y-auto px-3 py-4">
-          {menuItems.map((item) => (
-            <div key={item.label}>
-              <button
-                type="button"
-                onClick={() =>
-                  item.children
-                    ? toggleGroup(item.label)
-                    : navigate(item.label)
-                }
-                className={`flex w-full items-center gap-3 rounded-lg px-3 py-3 text-left text-sm transition ${
-                  active === item.label
-                    ? 'bg-[#D9273B] font-semibold text-white shadow-md'
-                    : 'text-slate-200 hover:bg-white/10'
-                }`}
-              >
-                <Icon name={item.icon} />
-                <span className="flex-1">{item.label}</span>
-                {item.children && (
-                  <span className="text-xs">
-                    {expanded.includes(item.label) ? '⌃' : '⌄'}
-                  </span>
-                )}
-              </button>
-
-              {item.children && expanded.includes(item.label) && (
-                <div className="ml-7 mt-1 space-y-1 border-l border-white/15 pl-3">
-                  {item.children.map((child) => (
-                    <button
-                      type="button"
-                      key={`${item.label}-${child}`}
-                      onClick={() => navigate(child, item.label)}
-                      className={`block w-full rounded-md px-3 py-2.5 text-left text-xs ${
-                        active === child ||
-                        (child === 'Trash' &&
-                          active === (item.label === 'Categories' ? 'Category Trash' : 'Posts Trash'))
-                          ? 'bg-white/10 font-semibold text-white'
-                          : 'text-slate-300 hover:text-white'
-                      }`}
-                    >
-                      {child}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ))}
-        </nav>
-
-        <div className="border-t border-white/10 p-4">
-          <div className="flex items-center gap-3">
-            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-slate-600 font-bold">
-              A
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold">Administrator</p>
-              <p className="text-xs text-slate-400">Admin Portal</p>
-            </div>
-            <button
-              type="button"
-              title="Sign out"
-              aria-label="Sign out"
-              onClick={() => {
-                sessionStorage.removeItem('access_token')
-                sessionStorage.removeItem('token_type')
-                window.location.assign('/')
-              }}
-              className="rounded-md p-2 text-slate-300 hover:bg-white/10"
-            >
-              <Icon name="logout" />
-            </button>
-          </div>
-        </div>
-      </aside>
+      <Sidebar
+        active={active}
+        onNavigate={navigate}
+        mobileOpen={mobileMenu}
+        onCloseMobile={() => setMobileMenu(false)}
+      />
 
       {/* Main area */}
-      <div className="min-h-screen min-w-0 md:ml-[260px]">
-        {/* Navbar */}
-        <header className="sticky top-0 z-20 flex h-[64px] items-center gap-3 border-b border-slate-200 bg-white px-3 sm:px-5">
-          <button
-            type="button"
-            aria-label="Toggle navigation"
-            onClick={() => setMobileMenu((previous) => !previous)}
-            className="shrink-0 rounded-md p-2 text-slate-700 hover:bg-slate-100"
-          >
-            <Icon name="menu" />
-          </button>
-
-          <div className="relative min-w-0 max-w-[540px] flex-1">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-              <Icon name="search" className="h-4 w-4" />
-            </span>
-            <input
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-              placeholder="Search articles, categories, or anything..."
-              aria-label="Search articles and categories"
-              className="h-10 w-full rounded-lg border border-slate-100 bg-[#F3F6FA] pl-10 pr-3 text-xs outline-none focus:border-[#173B67] sm:text-sm"
-            />
-          </div>
-
-          {/* Push notification and profile group to the far right */}
-          <div className="ml-auto flex shrink-0 items-center gap-3 sm:gap-5">
-            <button
-              type="button"
-              aria-label="Notifications"
-              className="relative rounded-lg p-2 text-slate-600 hover:bg-slate-100"
-            >
-              <Icon name="bell" />
-              <span className="absolute right-1 top-1 grid h-4 min-w-4 place-items-center rounded-full bg-[#D9273B] px-1 text-[9px] leading-4 text-white">
-                3
-              </span>
-            </button>
-
-            <button
-              type="button"
-              className="flex items-center gap-2 rounded-lg py-1 pl-1 text-left hover:bg-slate-50"
-            >
-              <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-[#E3EAF4] font-bold text-[#173B67]">
-                A
-              </div>
-              <div className="hidden sm:block">
-                <p className="whitespace-nowrap text-xs font-semibold text-slate-800">
-                  Administrator
-                </p>
-                <p className="text-[10px] text-slate-500">Administrator</p>
-              </div>
-              <span className="ml-1 text-xs text-slate-500">⌄</span>
-            </button>
-          </div>
-        </header>
+      <div className="min-h-screen min-w-0 lg:ml-[260px]">
+        <Topbar
+          search={search}
+          onSearchChange={setSearch}
+          onOpenMobileMenu={() => setMobileMenu(true)}
+          administratorName="Administrator"
+        />
 
         <main className="min-w-0 space-y-4 p-3 sm:p-4">
           {active === 'All Categories' ? (
