@@ -11,6 +11,7 @@ export interface AuthorSummary {
   display_name: string;
   email: string;
   role: string;
+  image?: string | null;
 }
 
 export interface CategorySummary {
@@ -92,14 +93,18 @@ export interface PostStatusCounts {
   archived: number;
 }
 
+export type PostBulkAction =
+  | "trash"
+  | "restore"
+  | "permanent_delete"
+  | "publish"
+  | "unpublish"
+  | "change_category";
+
+export type BulkPostAction = PostBulkAction;
+
 export interface PostBulkActionRequest {
-  action:
-    | "trash"
-    | "restore"
-    | "permanent_delete"
-    | "publish"
-    | "unpublish"
-    | "change_category";
+  action: PostBulkAction;
   post_ids: number[];
   category_id?: number;
 }
@@ -117,15 +122,50 @@ export interface PostListParams {
   page_size?: number;
   search?: string;
   status?: PostStatus | string;
-  category_id?: number;
-  author_id?: number;
-  is_featured?: boolean;
-  is_breaking_news?: boolean;
+  category_id?: number | string;
+  author_id?: number | string;
+  is_featured?: boolean | string;
+  is_breaking_news?: boolean | string;
   trash?: boolean;
   sort_by?: string;
   sort_order?: "asc" | "desc";
+  sort_direction?: "asc" | "desc";
   start_date?: string;
   end_date?: string;
+  created_from?: string;
+  created_to?: string;
+}
+
+/* =======================================================================
+   HELPERS
+======================================================================= */
+
+export function getPostStatusLabel(status: PostStatus | string): string {
+  switch (status) {
+    case "PUBLISHED":
+      return "Published";
+    case "DRAFT":
+      return "Draft";
+    case "SCHEDULED":
+      return "Scheduled";
+    case "ARCHIVED":
+      return "Archived";
+    default:
+      return status ? String(status) : "Draft";
+  }
+}
+
+export function getUserDisplayName(user?: AuthorSummary | null): string {
+  if (!user) return "Telugu Front Editor";
+  return user.display_name?.trim() || user.email || "Author";
+}
+
+export function getApiErrorMessage(
+  error: unknown,
+  fallback: string = "Something went wrong. Please try again.",
+): string {
+  if (error instanceof Error) return error.message;
+  return fallback;
 }
 
 /* =======================================================================
@@ -140,15 +180,16 @@ export async function getPosts(
     page_size: params.page_size,
     search: params.search,
     status: params.status,
-    category_id: params.category_id,
-    author_id: params.author_id,
-    is_featured: params.is_featured,
-    is_breaking_news: params.is_breaking_news,
+    category_id: params.category_id !== "" ? params.category_id : undefined,
+    author_id: params.author_id !== "" ? params.author_id : undefined,
+    is_featured: params.is_featured !== "" ? params.is_featured : undefined,
+    is_breaking_news:
+      params.is_breaking_news !== "" ? params.is_breaking_news : undefined,
     trash: params.trash,
     sort_by: params.sort_by,
-    sort_order: params.sort_order,
-    start_date: params.start_date,
-    end_date: params.end_date,
+    sort_order: params.sort_order || params.sort_direction,
+    start_date: params.start_date || params.created_from,
+    end_date: params.end_date || params.created_to,
   });
 
   if (Array.isArray(response)) {
@@ -196,6 +237,8 @@ export function movePostToTrash(id: number): Promise<Post> {
   return api.delete<Post>(`/api/posts/${id}`);
 }
 
+export const trashPost = movePostToTrash;
+
 export function restorePost(id: number): Promise<Post> {
   return api.post<Post>(`/api/posts/${id}/restore`);
 }
@@ -237,9 +280,13 @@ export function bulkActionPosts(
   return api.post<PostBulkActionResult>("/api/posts/bulk-action", payload);
 }
 
+export const runBulkPostAction = bulkActionPosts;
+
 export function getStatusCounts(): Promise<PostStatusCounts> {
   return api.get<PostStatusCounts>("/api/posts/status-counts");
 }
+
+export const getPostStatusCounts = getStatusCounts;
 
 export function getRecentPosts(limit: number = 5): Promise<Post[]> {
   return api.get<Post[]>("/api/posts/recent", { limit });
@@ -274,8 +321,8 @@ export async function exportPostsCsv(params: PostListParams = {}): Promise<void>
     search: params.search,
     is_featured: params.is_featured,
     is_breaking_news: params.is_breaking_news,
-    start_date: params.start_date,
-    end_date: params.end_date,
+    start_date: params.start_date || params.created_from,
+    end_date: params.end_date || params.created_to,
   });
 
   const url = window.URL.createObjectURL(blob);
@@ -287,3 +334,5 @@ export async function exportPostsCsv(params: PostListParams = {}): Promise<void>
   window.URL.revokeObjectURL(url);
   document.body.removeChild(a);
 }
+
+export const exportPosts = exportPostsCsv;

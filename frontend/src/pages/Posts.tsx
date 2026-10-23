@@ -1,85 +1,95 @@
 import {
   useCallback,
   useEffect,
-  useState,
+  useMemo,
   useRef,
+  useState,
 } from "react";
 import type { FormEvent } from "react";
 import {
-  Check,
+  Archive,
+  CalendarClock,
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Copy,
   Download,
-  FileText,
+  Eye,
+  FileDown,
+  FileSpreadsheet,
+  Filter,
   ImageOff,
-  LoaderCircle,
+  Loader2,
+  MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
+  RotateCcw,
   Search,
+  Smartphone,
   Star,
   Trash2,
   Upload,
+  UserRound,
   X,
   Zap,
 } from "lucide-react";
 
 import {
   bulkActionPosts,
-  createDraft,
-  createPost,
   duplicatePost,
   exportPostsCsv,
+  getApiErrorMessage,
   getPosts,
+  getPostStatusCounts,
+  getPostStatusLabel,
+  getUserDisplayName,
   movePostToTrash,
+  permanentlyDeletePost,
   publishPost,
-  toggleBreaking,
-  toggleFeatured,
+  restorePost,
   unpublishPost,
-  updatePost,
-  uploadPostImage,
 } from "../services/posts";
 import type {
+  AuthorSummary,
   Post,
-  PostCreate,
+  PostBulkAction,
+  PostListParams,
   PostStatus,
+  PostStatusCounts,
 } from "../services/posts";
 import { getCategories } from "../services/categories";
 import type { Category } from "../services/categories";
+import PostEditor from "./PostEditor";
+import PostPreview from "./PostPreview";
 
 type PostsProps = {
   mode?: "all" | "drafts" | "published";
   onNavigate?: (page: string) => void;
 };
 
-type PostForm = {
+interface ConfirmationDialogState {
   title: string;
-  slug: string;
-  category_id: string;
-  summary: string;
-  content: string;
-  featured_image: string;
-  is_featured: boolean;
-  is_breaking_news: boolean;
-  status: PostStatus;
-  seo_title: string;
-  seo_description: string;
-  scheduled_at: string;
-};
+  message: string;
+  confirmLabel: string;
+  isDestructive?: boolean;
+  onConfirm: () => void;
+}
 
-const EMPTY_FORM: PostForm = {
-  title: "",
-  slug: "",
-  category_id: "",
-  summary: "",
-  content: "",
-  featured_image: "",
-  is_featured: false,
-  is_breaking_news: false,
-  status: "DRAFT",
-  seo_title: "",
-  seo_description: "",
-  scheduled_at: "",
-};
+function toLocalDateTimeInput(date: Date): string {
+  const timezoneOffset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - timezoneOffset).toISOString().slice(0, 16);
+}
+
+function getLast24HoursStart(): string {
+  const date = new Date();
+  date.setHours(date.getHours() - 24);
+  return toLocalDateTimeInput(date);
+}
+
+function getCurrentDateTime(): string {
+  return toLocalDateTimeInput(new Date());
+}
 
 function formatDate(value?: string | null): string {
   if (!value) return "—";
@@ -94,49 +104,117 @@ function formatDate(value?: string | null): string {
   }).format(date);
 }
 
-export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsProps) {
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [total, setTotal] = useState(0);
-  const [totalPages, setTotalPages] = useState(1);
-  const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(10);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [uploadingImage, setUploadingImage] = useState(false);
-  const [actionId, setActionId] = useState<number | null>(null);
+function getInitials(name?: string | null): string {
+  if (!name) return "TF";
+  return name
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((w) => w[0]?.toUpperCase())
+    .join("");
+}
 
-  const [categories, setCategories] = useState<Category[]>([]);
-  const [search, setSearch] = useState("");
-  const [categoryFilter, setCategoryFilter] = useState<string>("ALL");
-  const [statusFilter, setStatusFilter] = useState<string>(
-    mode === "drafts" ? "DRAFT" : mode === "published" ? "PUBLISHED" : "ALL",
+function UserCell({ user }: { user?: AuthorSummary | null }) {
+  if (!user) {
+    return <span className="text-xs text-slate-400">Not recorded</span>;
+  }
+  const displayName = getUserDisplayName(user);
+  return (
+    <div className="flex min-w-0 items-center gap-2">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[#10243D] text-[10px] font-bold text-white shadow-sm">
+        {getInitials(displayName)}
+      </div>
+      <div className="min-w-0">
+        <p className="truncate text-xs font-semibold text-slate-800">
+          {displayName}
+        </p>
+        <p className="truncate text-[10px] text-slate-400">Author</p>
+      </div>
+    </div>
   );
+}
 
+const EMPTY_COUNTS: PostStatusCounts = {
+  all: 0,
+  published: 0,
+  draft: 0,
+  scheduled: 0,
+  trash: 0,
+  archived: 0,
+};
+
+export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsProps) {
+  // Navigation / View modes
+  const [view, setView] = useState<"list" | "editor" | "preview">("list");
+  const [selectedPostId, setSelectedPostId] = useState<number | null>(null);
+
+  // Posts listing state
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [total, setTotal] = useState<number>(0);
+  const [totalPages, setTotalPages] = useState<number>(1);
+  const [page, setPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(20);
+  const [counts, setCounts] = useState<PostStatusCounts>(EMPTY_COUNTS);
+  const [categories, setCategories] = useState<Category[]>([]);
+
+  // Search & Filter state
+  const [search, setSearch] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<string>(
+    mode === "drafts" ? "DRAFT" : mode === "published" ? "PUBLISHED" : "",
+  );
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [dateFrom, setDateFrom] = useState<string>("");
+  const [dateTo, setDateTo] = useState<string>("");
+
+  // UI state
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [editingPost, setEditingPost] = useState<Post | null>(null);
-  const [form, setForm] = useState<PostForm>(EMPTY_FORM);
-  const [confirmPost, setConfirmPost] = useState<{
-    type: "trash" | "bulk_trash" | "publish" | "unpublish";
-    post?: Post;
-  } | null>(null);
+  const [loading, setLoading] = useState<boolean>(true);
+  const [filterLoading, setFilterLoading] = useState<boolean>(false);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [showFilterAccordion, setShowFilterAccordion] = useState<boolean>(false);
+  const [showExportMenu, setShowExportMenu] = useState<boolean>(false);
+  const [showBulkMenu, setShowBulkMenu] = useState<boolean>(false);
+  const [openRowMenu, setOpenRowMenu] = useState<number | null>(null);
 
   const [toast, setToast] = useState<{
     type: "success" | "error";
     message: string;
   } | null>(null);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [confirmationDialog, setConfirmationDialog] =
+    useState<ConfirmationDialogState | null>(null);
+
+  const exportMenuRef = useRef<HTMLDivElement>(null);
+  const bulkMenuRef = useRef<HTMLDivElement>(null);
+  const rowMenuRef = useRef<HTMLDivElement>(null);
 
   const showToast = useCallback(
     (type: "success" | "error", message: string) => {
       setToast({ type, message });
-      window.setTimeout(() => setToast(null), 4000);
+      window.setTimeout(() => setToast(null), 3500);
     },
     [],
   );
 
-  // Load categories for dropdown filter and editor
+  // Close menus on outside click
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      const target = event.target as Node;
+      if (exportMenuRef.current && !exportMenuRef.current.contains(target)) {
+        setShowExportMenu(false);
+      }
+      if (bulkMenuRef.current && !bulkMenuRef.current.contains(target)) {
+        setShowBulkMenu(false);
+      }
+      if (rowMenuRef.current && !rowMenuRef.current.contains(target)) {
+        setOpenRowMenu(null);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
+
+  // Load Categories
   useEffect(() => {
     let cancelled = false;
     async function loadCats() {
@@ -146,7 +224,7 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
           setCategories(res.items.filter((c) => !c.is_deleted));
         }
       } catch {
-        // Categories load error handled silently
+        // Fallback
       }
     }
     void loadCats();
@@ -162,163 +240,273 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
     } else if (mode === "published") {
       setStatusFilter("PUBLISHED");
     } else {
-      setStatusFilter("ALL");
+      setStatusFilter("");
     }
     setPage(1);
   }, [mode]);
 
-  // Load posts
-  const loadPosts = useCallback(async () => {
-    setLoading(true);
-    try {
-      const activeStatus =
-        mode === "drafts"
-          ? "DRAFT"
-          : mode === "published"
-            ? "PUBLISHED"
-            : statusFilter !== "ALL"
-              ? statusFilter
-              : undefined;
+  // Load Posts & Status Counts
+  const loadPosts = useCallback(
+    async (isInitial = false) => {
+      if (isInitial) {
+        setLoading(true);
+      } else {
+        setFilterLoading(true);
+      }
 
-      const activeCat =
-        categoryFilter !== "ALL" ? Number(categoryFilter) : undefined;
+      try {
+        const isTrashTab = statusFilter === "TRASHED";
+        const queryStatus =
+          isTrashTab || !statusFilter
+            ? undefined
+            : (statusFilter as PostStatus);
 
-      const res = await getPosts({
-        page,
-        page_size: pageSize,
-        search: search.trim() || undefined,
-        status: activeStatus,
-        category_id: activeCat,
-        trash: false,
-        sort_by: mode === "published" ? "published_at" : "created_at",
-        sort_order: "desc",
-      });
+        const params: PostListParams = {
+          page,
+          page_size: pageSize,
+          search: search.trim() || undefined,
+          status: queryStatus,
+          category_id: categoryFilter ? Number(categoryFilter) : undefined,
+          trash: isTrashTab,
+          created_from: dateFrom || undefined,
+          created_to: dateTo || undefined,
+          sort_by: statusFilter === "PUBLISHED" ? "published_at" : "updated_at",
+          sort_order: "desc",
+        };
 
-      setPosts(res.items);
-      setTotal(res.total);
-      setTotalPages(res.total_pages);
-    } catch (err) {
-      showToast(
-        "error",
-        err instanceof Error ? err.message : "Failed to load posts.",
-      );
-    } finally {
-      setLoading(false);
-    }
-  }, [mode, page, pageSize, search, statusFilter, categoryFilter, showToast]);
+        const [postsRes, countsRes] = await Promise.all([
+          getPosts(params),
+          getPostStatusCounts(),
+        ]);
+
+        setPosts(postsRes.items);
+        setTotal(postsRes.total);
+        setTotalPages(postsRes.total_pages);
+        setCounts(countsRes);
+        setSelectedIds([]);
+      } catch (err) {
+        showToast(
+          "error",
+          getApiErrorMessage(err, "Unable to load newsroom posts."),
+        );
+      } finally {
+        setLoading(false);
+        setFilterLoading(false);
+      }
+    },
+    [
+      categoryFilter,
+      dateFrom,
+      dateTo,
+      page,
+      pageSize,
+      search,
+      showToast,
+      statusFilter,
+    ],
+  );
 
   useEffect(() => {
-    const timer = window.setTimeout(() => {
-      void loadPosts();
-    }, 150);
-    return () => window.clearTimeout(timer);
+    void loadPosts(true);
   }, [loadPosts]);
 
-  // Open modal for Create
-  function handleOpenCreate() {
-    setEditingPost(null);
-    setForm({
-      ...EMPTY_FORM,
-      status: mode === "published" ? "PUBLISHED" : "DRAFT",
-    });
-    setModalOpen(true);
+  // Filter Actions
+  function handleApplyFilters(event?: FormEvent) {
+    event?.preventDefault();
+    setPage(1);
+    void loadPosts(false);
   }
 
-  // Open modal for Edit
-  function handleOpenEdit(post: Post) {
-    setEditingPost(post);
-    setForm({
-      title: post.title,
-      slug: post.slug,
-      category_id: post.category_id ? String(post.category_id) : "",
-      summary: post.summary || post.short_description || "",
-      content: post.content || "",
-      featured_image: post.featured_image || post.featured_image_url || "",
-      is_featured: post.is_featured,
-      is_breaking_news: post.is_breaking_news,
-      status: post.status,
-      seo_title: post.seo_title || "",
-      seo_description: post.seo_description || "",
-      scheduled_at: post.scheduled_at
-        ? new Date(post.scheduled_at).toISOString().slice(0, 16)
-        : "",
-    });
-    setModalOpen(true);
+  function handleResetFilters() {
+    setSearch("");
+    setStatusFilter("");
+    setCategoryFilter("");
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+    void loadPosts(false);
   }
 
-  // Handle Image Upload
-  async function handleImageFileChange(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (!file) return;
+  function handleSetLast24Hours() {
+    setDateFrom(getLast24HoursStart());
+    setDateTo(getCurrentDateTime());
+    setPage(1);
+    void loadPosts(false);
+  }
 
-    setUploadingImage(true);
-    try {
-      const res = await uploadPostImage(file);
-      setForm((prev) => ({ ...prev, featured_image: res.image_url }));
-      showToast("success", "Image uploaded successfully.");
-    } catch (err) {
-      showToast(
-        "error",
-        err instanceof Error ? err.message : "Image upload failed.",
+  function handleShowAllPosts() {
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+    void loadPosts(false);
+  }
+
+  // Active filter count for badge
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (categoryFilter) count++;
+    if (dateFrom || dateTo) count++;
+    if (search.trim()) count++;
+    return count;
+  }, [categoryFilter, dateFrom, dateTo, search]);
+
+  // Status Tab Card Click
+  function handleStatusCardClick(targetStatus: string) {
+    setStatusFilter(targetStatus);
+    setDateFrom("");
+    setDateTo("");
+    setPage(1);
+  }
+
+  // Selection
+  const allCurrentPageSelected =
+    posts.length > 0 && posts.every((p) => selectedIds.includes(p.id));
+
+  function toggleSelectAll() {
+    if (allCurrentPageSelected) {
+      const pageIds = new Set(posts.map((p) => p.id));
+      setSelectedIds((curr) => curr.filter((id) => !pageIds.has(id)));
+    } else {
+      setSelectedIds((curr) =>
+        Array.from(new Set([...curr, ...posts.map((p) => p.id)])),
       );
-    } finally {
-      setUploadingImage(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   }
 
-  // Handle Form Submission
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
-    if (!form.title.trim()) {
-      showToast("error", "Article title is required.");
+  function togglePostSelection(id: number) {
+    setSelectedIds((curr) =>
+      curr.includes(id) ? curr.filter((i) => i !== id) : [...curr, id],
+    );
+  }
+
+  // Bulk Actions
+  async function executeBulkAction(
+    action: PostBulkAction,
+    confirmed = false,
+  ) {
+    if (selectedIds.length === 0) {
+      showToast("error", "Please select at least one post.");
       return;
     }
 
-    setSaving(true);
+    if ((action === "trash" || action === "permanent_delete") && !confirmed) {
+      const isPermanent = action === "permanent_delete";
+      setConfirmationDialog({
+        title: isPermanent
+          ? "Delete selected posts permanently?"
+          : "Move selected posts to trash?",
+        message: isPermanent
+          ? `Are you sure you want to permanently delete ${selectedIds.length} posts? This action cannot be undone.`
+          : `Are you sure you want to move ${selectedIds.length} posts to Trash?`,
+        confirmLabel: isPermanent ? "Delete Permanently" : "Move to Trash",
+        isDestructive: true,
+        onConfirm: () => {
+          setConfirmationDialog(null);
+          void executeBulkAction(action, true);
+        },
+      });
+      return;
+    }
+
+    setActionLoading(`bulk-${action}`);
     try {
-      const payload: PostCreate = {
-        title: form.title.trim(),
-        slug: form.slug.trim() || undefined,
-        summary: form.summary.trim() || undefined,
-        content: form.content,
-        featured_image: form.featured_image.trim() || undefined,
-        category_id: form.category_id ? Number(form.category_id) : null,
-        status: form.status,
-        is_featured: form.is_featured,
-        is_breaking_news: form.is_breaking_news,
-        seo_title: form.seo_title.trim() || undefined,
-        seo_description: form.seo_description.trim() || undefined,
-        scheduled_at: form.scheduled_at ? new Date(form.scheduled_at).toISOString() : undefined,
-      };
-
-      if (editingPost) {
-        await updatePost(editingPost.id, payload);
-        showToast("success", "Post updated successfully.");
-      } else {
-        if (form.status === "DRAFT") {
-          await createDraft(payload);
-        } else {
-          await createPost(payload);
-        }
-        showToast("success", "Post created successfully.");
-      }
-
-      setModalOpen(false);
-      void loadPosts();
+      const res = await bulkActionPosts({ action, post_ids: selectedIds });
+      showToast("success", res.message);
+      setSelectedIds([]);
+      setShowBulkMenu(false);
+      await loadPosts();
     } catch (err) {
-      showToast(
-        "error",
-        err instanceof Error ? err.message : "Failed to save post.",
-      );
+      showToast("error", getApiErrorMessage(err, "Bulk action failed."));
     } finally {
-      setSaving(false);
+      setActionLoading(null);
     }
   }
 
-  // Quick Publish / Unpublish
+  // Row Trash / Restore
+  async function handleTrashOrRestore(post: Post, confirmed = false) {
+    const isTrashed = Boolean(post.deleted_at || post.is_deleted) || statusFilter === "TRASHED";
+
+    if (!confirmed) {
+      setConfirmationDialog({
+        title: isTrashed ? "Restore news post?" : "Move post to trash?",
+        message: isTrashed
+          ? `Are you sure you want to restore "${post.title}" back to active drafts?`
+          : `Are you sure you want to move "${post.title}" to trash?`,
+        confirmLabel: isTrashed ? "Restore Post" : "Move to Trash",
+        isDestructive: !isTrashed,
+        onConfirm: () => {
+          setConfirmationDialog(null);
+          void handleTrashOrRestore(post, true);
+        },
+      });
+      return;
+    }
+
+    setActionLoading(`post-${post.id}`);
+    try {
+      if (isTrashed) {
+        await restorePost(post.id);
+        showToast("success", `Restored "${post.title}".`);
+      } else {
+        await movePostToTrash(post.id);
+        showToast("success", `Moved "${post.title}" to trash.`);
+      }
+      setOpenRowMenu(null);
+      await loadPosts();
+    } catch (err) {
+      showToast("error", getApiErrorMessage(err, "Unable to update post."));
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  // Row Permanent Delete
+  async function handlePermanentDelete(post: Post, confirmed = false) {
+    if (!confirmed) {
+      setConfirmationDialog({
+        title: "Permanently delete post?",
+        message: `Are you sure you want to permanently remove "${post.title}"? This cannot be undone.`,
+        confirmLabel: "Delete Permanently",
+        isDestructive: true,
+        onConfirm: () => {
+          setConfirmationDialog(null);
+          void handlePermanentDelete(post, true);
+        },
+      });
+      return;
+    }
+
+    setActionLoading(`post-${post.id}`);
+    try {
+      await permanentlyDeletePost(post.id);
+      showToast("success", `Permanently removed "${post.title}".`);
+      setOpenRowMenu(null);
+      await loadPosts();
+    } catch (err) {
+      showToast("error", getApiErrorMessage(err, "Permanent deletion failed."));
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  // Row Duplicate
+  async function handleDuplicate(post: Post) {
+    setActionLoading(`dup-${post.id}`);
+    try {
+      await duplicatePost(post.id);
+      showToast("success", `Duplicated "${post.title}" as draft.`);
+      setOpenRowMenu(null);
+      await loadPosts();
+    } catch (err) {
+      showToast("error", getApiErrorMessage(err, "Failed to duplicate post."));
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  // Row Toggle Publish
   async function handleTogglePublish(post: Post) {
-    setActionId(post.id);
+    setActionLoading(`pub-${post.id}`);
     try {
       if (post.status === "PUBLISHED") {
         await unpublishPost(post.id);
@@ -327,415 +515,755 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
         await publishPost(post.id);
         showToast("success", `Published "${post.title}".`);
       }
-      void loadPosts();
+      await loadPosts();
     } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Action failed.");
+      showToast("error", getApiErrorMessage(err, "Action failed."));
     } finally {
-      setActionId(null);
-    }
-  }
-
-  // Duplicate Post
-  async function handleDuplicate(post: Post) {
-    setActionId(post.id);
-    try {
-      await duplicatePost(post.id);
-      showToast("success", `Duplicated "${post.title}".`);
-      void loadPosts();
-    } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Duplicate failed.");
-    } finally {
-      setActionId(null);
-    }
-  }
-
-  // Toggle Featured
-  async function handleToggleFeatured(post: Post) {
-    try {
-      const res = await toggleFeatured(post.id);
-      setPosts((prev) =>
-        prev.map((p) => (p.id === post.id ? { ...p, is_featured: res.is_featured } : p)),
-      );
-      showToast(
-        "success",
-        res.is_featured ? "Marked as featured." : "Removed from featured.",
-      );
-    } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Failed to toggle.");
-    }
-  }
-
-  // Toggle Breaking
-  async function handleToggleBreaking(post: Post) {
-    try {
-      const res = await toggleBreaking(post.id);
-      setPosts((prev) =>
-        prev.map((p) =>
-          p.id === post.id ? { ...p, is_breaking_news: res.is_breaking_news } : p,
-        ),
-      );
-      showToast(
-        "success",
-        res.is_breaking_news ? "Marked as Breaking News." : "Removed from Breaking News.",
-      );
-    } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Failed to toggle.");
-    }
-  }
-
-  // Move to Trash
-  async function handleConfirmTrash() {
-    if (!confirmPost) return;
-    setSaving(true);
-    try {
-      if (confirmPost.type === "trash" && confirmPost.post) {
-        await movePostToTrash(confirmPost.post.id);
-        showToast("success", `Moved "${confirmPost.post.title}" to Trash.`);
-      } else if (confirmPost.type === "bulk_trash" && selectedIds.length > 0) {
-        await bulkActionPosts({ action: "trash", post_ids: selectedIds });
-        showToast("success", `Moved ${selectedIds.length} posts to Trash.`);
-        setSelectedIds([]);
-      }
-      setConfirmPost(null);
-      void loadPosts();
-    } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Action failed.");
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  // Bulk actions
-  async function handleBulkAction(
-    action: "publish" | "unpublish" | "trash",
-  ) {
-    if (selectedIds.length === 0) return;
-    if (action === "trash") {
-      setConfirmPost({ type: "bulk_trash" });
-      return;
-    }
-    setSaving(true);
-    try {
-      const res = await bulkActionPosts({ action, post_ids: selectedIds });
-      showToast("success", res.message);
-      setSelectedIds([]);
-      void loadPosts();
-    } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Bulk action failed.");
-    } finally {
-      setSaving(false);
+      setActionLoading(null);
     }
   }
 
   // Export CSV
-  async function handleExport() {
+  async function handleExport(_selectedOnly = false) {
+    setActionLoading("export");
     try {
-      showToast("success", "Preparing CSV download...");
+      showToast("success", "Generating CSV export...");
       await exportPostsCsv({
         search: search.trim() || undefined,
-        status:
-          mode === "drafts"
-            ? "DRAFT"
-            : mode === "published"
-              ? "PUBLISHED"
-              : statusFilter !== "ALL"
-                ? statusFilter
-                : undefined,
-        category_id: categoryFilter !== "ALL" ? Number(categoryFilter) : undefined,
+        status: statusFilter && statusFilter !== "TRASHED" ? (statusFilter as PostStatus) : undefined,
+        category_id: categoryFilter ? Number(categoryFilter) : undefined,
+        trash: statusFilter === "TRASHED",
+        created_from: dateFrom || undefined,
+        created_to: dateTo || undefined,
       });
+      setShowExportMenu(false);
     } catch (err) {
-      showToast("error", err instanceof Error ? err.message : "Export failed.");
+      showToast("error", getApiErrorMessage(err, "Export failed."));
+    } finally {
+      setActionLoading(null);
     }
   }
 
-  // Selection
-  const allSelected =
-    posts.length > 0 && posts.every((p) => selectedIds.includes(p.id));
+  // Dynamic Header Title
+  const pageTitle = useMemo(() => {
+    switch (statusFilter) {
+      case "PUBLISHED":
+        return "Published Posts";
+      case "DRAFT":
+        return "Draft Posts";
+      case "SCHEDULED":
+        return "Scheduled Posts";
+      case "TRASHED":
+        return "Posts Trash";
+      default:
+        return "All Posts";
+    }
+  }, [statusFilter]);
 
-  function toggleSelect(id: number) {
-    setSelectedIds((prev) =>
-      prev.includes(id) ? prev.filter((i) => i !== id) : [...prev, id],
+  // Status Cards Config
+  const statusCards = [
+    {
+      label: "All Posts",
+      value: counts.all,
+      status: "",
+      accent: "border-[#10243D] bg-[#10243D] text-white",
+    },
+    {
+      label: "Published",
+      value: counts.published,
+      status: "PUBLISHED",
+      accent: "border-emerald-200 bg-emerald-50 text-emerald-800",
+    },
+    {
+      label: "Drafts",
+      value: counts.draft,
+      status: "DRAFT",
+      accent: "border-amber-200 bg-amber-50 text-amber-800",
+    },
+    {
+      label: "Scheduled",
+      value: counts.scheduled,
+      status: "SCHEDULED",
+      accent: "border-sky-200 bg-sky-50 text-sky-800",
+    },
+    {
+      label: "Trash",
+      value: counts.trash,
+      status: "TRASHED",
+      accent: "border-rose-200 bg-rose-50 text-rose-800",
+    },
+  ];
+
+  // SUB-VIEW: Post Editor View
+  if (view === "editor") {
+    return (
+      <PostEditor
+        postId={selectedPostId}
+        onBack={() => {
+          setView("list");
+          setSelectedPostId(null);
+          void loadPosts();
+        }}
+        onPreview={(p) => {
+          setSelectedPostId(p.id);
+          setView("preview");
+        }}
+        onSaved={() => void loadPosts()}
+      />
     );
   }
 
-  function toggleSelectAll() {
-    if (allSelected) {
-      setSelectedIds([]);
-    } else {
-      setSelectedIds(posts.map((p) => p.id));
-    }
+  // SUB-VIEW: Post Mobile Preview View
+  if (view === "preview" && selectedPostId) {
+    return (
+      <PostPreview
+        postId={selectedPostId}
+        onBack={() => {
+          setView("list");
+          setSelectedPostId(null);
+        }}
+        onEdit={(id) => {
+          setSelectedPostId(id);
+          setView("editor");
+        }}
+      />
+    );
   }
 
-  const pageTitle =
-    mode === "drafts"
-      ? "Draft Posts"
-      : mode === "published"
-        ? "Published Posts"
-        : "All Posts";
-
-  const pageSubtitle =
-    mode === "drafts"
-      ? "Manage and edit unfinished news drafts before publishing."
-      : mode === "published"
-        ? "Live news articles visible to Telugu Front readers."
-        : "Complete overview and lifecycle management of news articles.";
-
+  // MAIN VIEW: Posts Newsroom Listing
   return (
-    <div className="space-y-4">
+    <div className="space-y-5 pb-10">
       {/* Toast Notification */}
       {toast && (
         <div
           role="status"
-          className={`fixed right-6 top-6 z-50 flex items-center gap-2 rounded-xl px-4 py-3 text-sm font-semibold text-white shadow-xl transition-all duration-300 ${
-            toast.type === "success" ? "bg-emerald-600" : "bg-rose-600"
+          className={`fixed right-5 top-5 z-[100] flex max-w-md items-center gap-2.5 rounded-2xl border px-4 py-3 shadow-xl backdrop-blur ${
+            toast.type === "success"
+              ? "border-emerald-200 bg-emerald-50/95 text-emerald-800"
+              : "border-rose-200 bg-rose-50/95 text-rose-800"
           }`}
         >
-          {toast.type === "success" ? (
-            <Check className="h-4 w-4" />
-          ) : (
-            <X className="h-4 w-4" />
-          )}
-          <span>{toast.message}</span>
+          <span className="text-xs font-semibold">{toast.message}</span>
+          <button
+            type="button"
+            onClick={() => setToast(null)}
+            className="ml-auto rounded-lg p-0.5 hover:bg-black/5"
+          >
+            <X size={15} />
+          </button>
         </div>
       )}
 
-      {/* Page Header */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200/80 bg-white p-4 sm:flex-row sm:items-center sm:justify-between sm:p-5">
-        <div>
-          <h1 className="text-xl font-bold tracking-tight text-[#10243D] sm:text-2xl">
-            {pageTitle}
-          </h1>
-          <p className="mt-1 text-xs text-slate-500">{pageSubtitle}</p>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={handleExport}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-            title="Export filtered posts to CSV"
+      {/* Confirmation Dialog */}
+      {confirmationDialog && (
+        <div
+          className="fixed inset-0 z-[200] flex items-center justify-center bg-slate-950/60 p-4 backdrop-blur-xs"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setConfirmationDialog(null);
+          }}
+        >
+          <div
+            role="alertdialog"
+            aria-modal="true"
+            className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
           >
-            <Download className="h-4 w-4 text-slate-500" />
-            <span>Export CSV</span>
-          </button>
+            <div className="flex items-center justify-between gap-3">
+              <h2 className="text-lg font-bold text-[#10243D]">
+                {confirmationDialog.title}
+              </h2>
+              <div
+                className={`grid h-11 w-11 shrink-0 place-items-center rounded-2xl ${
+                  confirmationDialog.isDestructive
+                    ? "bg-rose-100 text-rose-600"
+                    : "bg-emerald-100 text-emerald-600"
+                }`}
+              >
+                {confirmationDialog.title.toLowerCase().includes("restore") ? (
+                  <RotateCcw size={20} strokeWidth={2.2} />
+                ) : (
+                  <Trash2 size={20} strokeWidth={2.2} />
+                )}
+              </div>
+            </div>
 
-          <button
-            type="button"
-            onClick={() => void loadPosts()}
-            disabled={loading}
-            className="flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
-            title="Refresh list"
-          >
-            <RefreshCw
-              className={`h-4 w-4 text-slate-500 ${loading ? "animate-spin" : ""}`}
-            />
-            <span className="hidden sm:inline">Refresh</span>
-          </button>
+            <p className="mt-3 text-xs leading-relaxed text-slate-500">
+              {confirmationDialog.message}
+            </p>
 
-          <button
-            type="button"
-            onClick={handleOpenCreate}
-            className="flex items-center gap-1.5 rounded-lg bg-[#D9273B] px-3.5 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-[#b81f30]"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Create New Post</span>
-          </button>
-        </div>
-      </div>
-
-      {/* Filter and Search Bar */}
-      <div className="flex flex-col gap-3 rounded-xl border border-slate-200/80 bg-white p-3.5 sm:flex-row sm:items-center sm:justify-between">
-        <div className="relative flex-1">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
-          <input
-            type="text"
-            placeholder="Search by title, summary, slug..."
-            value={search}
-            onChange={(e) => setSearch(e.target.value)}
-            className="h-9 w-full rounded-lg border border-slate-200 bg-slate-50/50 pl-9 pr-3 text-xs text-[#10243D] placeholder-slate-400 outline-none transition focus:border-[#D9273B] focus:bg-white"
-          />
-        </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          {/* Category Filter */}
-          <select
-            value={categoryFilter}
-            onChange={(e) => setCategoryFilter(e.target.value)}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 outline-none focus:border-[#D9273B]"
-          >
-            <option value="ALL">All Categories</option>
-            {categories.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
-
-          {/* Status Filter (only in 'all' mode) */}
-          {mode === "all" && (
-            <select
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-              className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 outline-none focus:border-[#D9273B]"
-            >
-              <option value="ALL">All Statuses</option>
-              <option value="PUBLISHED">Published</option>
-              <option value="DRAFT">Draft</option>
-              <option value="SCHEDULED">Scheduled</option>
-              <option value="ARCHIVED">Archived</option>
-            </select>
-          )}
-
-          {/* Page size */}
-          <select
-            value={pageSize}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value));
-              setPage(1);
-            }}
-            className="h-9 rounded-lg border border-slate-200 bg-white px-2.5 text-xs font-medium text-slate-700 outline-none focus:border-[#D9273B]"
-          >
-            <option value={10}>10 / page</option>
-            <option value={25}>25 / page</option>
-            <option value={50}>50 / page</option>
-          </select>
-        </div>
-      </div>
-
-      {/* Bulk Action Bar (Visible when items selected) */}
-      {selectedIds.length > 0 && (
-        <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-[#EFF5FC] px-4 py-2.5 text-xs font-semibold text-[#10243D]">
-          <span>{selectedIds.length} posts selected</span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => handleBulkAction("publish")}
-              className="rounded-md bg-emerald-600 px-2.5 py-1 text-white hover:bg-emerald-700"
-            >
-              Publish Selected
-            </button>
-            <button
-              type="button"
-              onClick={() => handleBulkAction("unpublish")}
-              className="rounded-md bg-amber-600 px-2.5 py-1 text-white hover:bg-amber-700"
-            >
-              Unpublish Selected
-            </button>
-            <button
-              type="button"
-              onClick={() => handleBulkAction("trash")}
-              className="rounded-md bg-rose-600 px-2.5 py-1 text-white hover:bg-rose-700"
-            >
-              Move to Trash
-            </button>
-            <button
-              type="button"
-              onClick={() => setSelectedIds([])}
-              className="text-slate-500 hover:text-slate-700"
-            >
-              Deselect
-            </button>
+            <div className="mt-6 flex justify-end gap-2.5">
+              <button
+                type="button"
+                onClick={() => setConfirmationDialog(null)}
+                className="rounded-xl border border-slate-300 px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={confirmationDialog.onConfirm}
+                className={`rounded-xl px-4 py-2 text-xs font-semibold text-white shadow-sm ${
+                  confirmationDialog.isDestructive
+                    ? "bg-rose-600 hover:bg-rose-700"
+                    : "bg-emerald-600 hover:bg-emerald-700"
+                }`}
+              >
+                {confirmationDialog.confirmLabel}
+              </button>
+            </div>
           </div>
         </div>
       )}
 
-      {/* Posts Table */}
-      <div className="overflow-hidden rounded-xl border border-slate-200/80 bg-white shadow-sm">
+      {/* =======================================================
+       * NEWSROOM DARK BANNER & METRICS
+       * ======================================================= */}
+      <section className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+        {/* Dark Banner */}
+        <div className="relative overflow-hidden bg-[#10243D] px-6 py-7 text-white lg:px-8">
+          {/* Red Glow Accent */}
+          <div className="absolute -right-16 -top-20 h-64 w-64 rounded-full bg-[#D9273B]/25 blur-3xl" />
+          <div className="absolute bottom-0 right-16 h-24 w-24 rounded-full bg-white/5" />
+
+          <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+            <div>
+              <div className="flex items-center gap-3">
+                <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#D9273B] text-white shadow-lg shadow-red-950/20">
+                  <Upload size={20} />
+                </div>
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-[0.2em] text-red-200">
+                    Content Newsroom
+                  </p>
+                  <h1 className="text-2xl font-bold sm:text-3xl">
+                    {pageTitle}
+                  </h1>
+                </div>
+              </div>
+              <p className="mt-3 max-w-2xl text-xs leading-5 text-slate-300">
+                Manage published stories, drafts, scheduled content, author revisions, exports, and mobile readers.
+              </p>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                type="button"
+                onClick={() => void loadPosts(false)}
+                disabled={filterLoading}
+                className="inline-flex h-10 items-center gap-2 rounded-xl border border-white/20 bg-white/10 px-4 text-xs font-semibold text-white transition hover:bg-white/15 disabled:opacity-50"
+              >
+                <RefreshCw
+                  size={15}
+                  className={filterLoading ? "animate-spin" : ""}
+                />
+                <span>Refresh</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPostId(null);
+                  setView("editor");
+                }}
+                className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#D9273B] px-5 text-xs font-bold text-white shadow-lg shadow-red-950/20 transition hover:bg-[#b81f30]"
+              >
+                <Plus size={16} />
+                <span>Create Post</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* 5 Status Cards */}
+        <div className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5 lg:p-6">
+          {statusCards.map((card) => {
+            const isActive = statusFilter === card.status;
+            return (
+              <button
+                key={card.label}
+                type="button"
+                onClick={() => handleStatusCardClick(card.status)}
+                className={`rounded-2xl border p-4 text-left transition ${
+                  isActive
+                    ? `${card.accent} shadow-sm`
+                    : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white"
+                }`}
+              >
+                <p
+                  className={`text-[10px] font-bold uppercase tracking-wider ${
+                    isActive ? "opacity-90" : "text-slate-400"
+                  }`}
+                >
+                  {card.label}
+                </p>
+                <p className="mt-1 text-2xl font-bold">
+                  {card.value.toLocaleString("en-IN")}
+                </p>
+              </button>
+            );
+          })}
+        </div>
+      </section>
+
+      {/* =======================================================
+       * SEARCH AND FILTER BAR
+       * ======================================================= */}
+      <section className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+        <form onSubmit={handleApplyFilters} className="p-4 lg:p-5">
+          <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
+            {/* Search Input */}
+            <div className="relative flex-1">
+              <Search
+                size={17}
+                className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400"
+              />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search headline, summary, slug or author..."
+                className="h-11 w-full rounded-2xl border border-slate-200 bg-slate-50/60 pl-11 pr-4 text-xs font-medium text-[#10243D] outline-none transition placeholder:text-slate-400 focus:border-[#D9273B] focus:bg-white focus:ring-4 focus:ring-red-50"
+              />
+            </div>
+
+            {/* Quick Action Buttons */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowFilterAccordion((curr) => !curr)}
+                className={`inline-flex h-11 items-center gap-1.5 rounded-2xl border px-3.5 text-xs font-bold transition ${
+                  showFilterAccordion || activeFilterCount > 0
+                    ? "border-red-200 bg-red-50 text-[#D9273B]"
+                    : "border-slate-200 bg-white text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                <Filter size={15} />
+                <span>Filters</span>
+                {activeFilterCount > 0 && (
+                  <span className="rounded-full bg-[#D9273B] px-1.5 py-0.2 text-[10px] font-bold text-white">
+                    {activeFilterCount}
+                  </span>
+                )}
+                <ChevronDown
+                  size={14}
+                  className={`transition-transform ${
+                    showFilterAccordion ? "rotate-180" : ""
+                  }`}
+                />
+              </button>
+
+              <button
+                type="submit"
+                disabled={filterLoading}
+                className="inline-flex h-11 items-center gap-1.5 rounded-2xl bg-[#10243D] px-4 text-xs font-bold text-white transition hover:bg-[#1b3455] disabled:opacity-50"
+              >
+                {filterLoading ? (
+                  <Loader2 size={15} className="animate-spin" />
+                ) : (
+                  <Search size={15} />
+                )}
+                <span>Apply</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSetLast24Hours}
+                className="inline-flex h-11 items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                <CalendarClock size={15} />
+                <span>Last 24 Hours</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleShowAllPosts}
+                className="inline-flex h-11 items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+              >
+                <Archive size={15} />
+                <span>Show All</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={handleResetFilters}
+                className="inline-flex h-11 items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
+              >
+                <RotateCcw size={15} />
+                <span>Reset</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Collapsible Filters Accordion */}
+          {showFilterAccordion && (
+            <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/70 p-4 lg:p-5">
+              <div className="mb-4 flex items-center justify-between">
+                <div>
+                  <h3 className="text-xs font-bold text-[#10243D]">
+                    Advanced Post Filters
+                  </h3>
+                  <p className="mt-0.5 text-[11px] text-slate-500">
+                    Filter newsroom content by category or publication timeframe.
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowFilterAccordion(false)}
+                  className="rounded-lg p-1 text-slate-400 hover:bg-slate-200 hover:text-slate-600"
+                >
+                  <X size={15} />
+                </button>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {/* Category Filter */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    Category
+                  </label>
+                  <select
+                    value={categoryFilter}
+                    onChange={(e) => setCategoryFilter(e.target.value)}
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-[#D9273B]"
+                  >
+                    <option value="">All Categories</option>
+                    {categories.map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Start Date & Time */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    Start Date & Time
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={dateFrom}
+                    onChange={(e) => setDateFrom(e.target.value)}
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-[#D9273B]"
+                  />
+                </div>
+
+                {/* End Date & Time */}
+                <div className="space-y-1">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                    End Date & Time
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={dateTo}
+                    onChange={(e) => setDateTo(e.target.value)}
+                    className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-[#D9273B]"
+                  />
+                </div>
+              </div>
+
+              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-slate-200 pt-3 text-[11px] text-slate-500">
+                <div>
+                  Active range:{" "}
+                  <span className="font-semibold text-slate-700">
+                    {dateFrom ? new Date(dateFrom).toLocaleDateString("en-IN") : "All time"}
+                    {" → "}
+                    {dateTo ? new Date(dateTo).toLocaleDateString("en-IN") : "Present"}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={handleSetLast24Hours}
+                    className="rounded-lg border border-red-200 bg-red-50 px-3 py-1 font-semibold text-[#D9273B] hover:bg-red-100"
+                  >
+                    Last 24 Hours
+                  </button>
+                  <button
+                    type="submit"
+                    className="rounded-lg bg-[#10243D] px-4 py-1 font-bold text-white hover:bg-[#1b3455]"
+                  >
+                    Apply Filters
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </form>
+      </section>
+
+      {/* =======================================================
+       * POSTS TABLE & TOOLBAR
+       * ======================================================= */}
+      <section className="overflow-visible rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+        {/* Table Top Toolbar */}
+        <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
+          <div>
+            <h2 className="text-base font-bold text-[#10243D]">
+              Newsroom Articles
+            </h2>
+            <p className="text-xs text-slate-500">
+              {total.toLocaleString("en-IN")} matching post(s)
+              {selectedIds.length > 0 && ` · ${selectedIds.length} selected`}
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2.5">
+            {/* Bulk Action Menu */}
+            {selectedIds.length > 0 && (
+              <div ref={bulkMenuRef} className="relative">
+                <button
+                  type="button"
+                  onClick={() => setShowBulkMenu((curr) => !curr)}
+                  className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-300 bg-white px-3 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50"
+                >
+                  <Archive size={14} />
+                  <span>Bulk Actions ({selectedIds.length})</span>
+                  <ChevronDown size={13} />
+                </button>
+
+                {showBulkMenu && (
+                  <div className="absolute right-0 top-11 z-40 w-52 overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                    <button
+                      type="button"
+                      disabled={actionLoading !== null}
+                      onClick={() => void executeBulkAction("publish")}
+                      className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Publish selected
+                    </button>
+                    <button
+                      type="button"
+                      disabled={actionLoading !== null}
+                      onClick={() => void executeBulkAction("unpublish")}
+                      className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                    >
+                      Move to drafts
+                    </button>
+                    <button
+                      type="button"
+                      disabled={actionLoading !== null}
+                      onClick={() => void executeBulkAction("trash")}
+                      className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                    >
+                      Move to trash
+                    </button>
+                    {statusFilter === "TRASHED" && (
+                      <>
+                        <button
+                          type="button"
+                          disabled={actionLoading !== null}
+                          onClick={() => void executeBulkAction("restore")}
+                          className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-semibold text-emerald-600 hover:bg-emerald-50"
+                        >
+                          Restore selected
+                        </button>
+                        <button
+                          type="button"
+                          disabled={actionLoading !== null}
+                          onClick={() => void executeBulkAction("permanent_delete")}
+                          className="flex w-full items-center rounded-xl px-3 py-2 text-left text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                        >
+                          Delete permanently
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Export Menu */}
+            <div ref={exportMenuRef} className="relative">
+              <button
+                type="button"
+                onClick={() => setShowExportMenu((curr) => !curr)}
+                className="inline-flex h-9 items-center gap-1.5 rounded-xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                <Download size={14} />
+                <span>Export</span>
+                <ChevronDown size={13} />
+              </button>
+
+              {showExportMenu && (
+                <div className="absolute right-0 top-11 z-40 w-60 overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                  <button
+                    type="button"
+                    onClick={() => void handleExport(false)}
+                    className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    <FileDown size={16} className="text-sky-600" />
+                    <div>
+                      <p className="font-bold">Export Filtered CSV</p>
+                      <p className="text-[10px] text-slate-400">All matching records</p>
+                    </div>
+                  </button>
+                  {selectedIds.length > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => void handleExport(true)}
+                      className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-left text-xs font-semibold text-[#D9273B] hover:bg-red-50"
+                    >
+                      <FileSpreadsheet size={16} />
+                      <div>
+                        <p className="font-bold">Export Selected CSV</p>
+                        <p className="text-[10px] text-slate-400">({selectedIds.length} articles)</p>
+                      </div>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+
+        {/* Posts Table */}
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[700px] text-left text-xs">
+          <table className="w-full min-w-[1050px] text-left text-xs">
             <thead className="border-b border-slate-100 bg-[#F8FAFD] text-slate-600">
               <tr>
-                <th className="w-10 px-4 py-3">
+                <th className="w-12 px-5 py-4">
                   <input
                     type="checkbox"
-                    checked={allSelected}
+                    checked={allCurrentPageSelected}
                     onChange={toggleSelectAll}
                     className="h-4 w-4 rounded border-slate-300 text-[#D9273B] focus:ring-[#D9273B]"
                   />
                 </th>
-                <th className="px-4 py-3 font-semibold">Article</th>
-                <th className="px-4 py-3 font-semibold">Category</th>
-                <th className="px-4 py-3 font-semibold">Author</th>
-                <th className="px-4 py-3 font-semibold">Status</th>
-                <th className="px-4 py-3 font-semibold">Flags</th>
-                <th className="px-4 py-3 font-semibold">Date</th>
-                <th className="px-4 py-3 text-right font-semibold">Actions</th>
+                <th className="px-4 py-4 font-bold uppercase tracking-wide text-slate-500">
+                  Article
+                </th>
+                <th className="px-4 py-4 font-bold uppercase tracking-wide text-slate-500">
+                  Category
+                </th>
+                <th className="px-4 py-4 font-bold uppercase tracking-wide text-slate-500">
+                  Status
+                </th>
+                <th className="px-4 py-4 font-bold uppercase tracking-wide text-slate-500">
+                  Author
+                </th>
+                <th className="px-4 py-4 font-bold uppercase tracking-wide text-slate-500">
+                  Created
+                </th>
+                <th className="px-4 py-4 font-bold uppercase tracking-wide text-slate-500">
+                  Updated
+                </th>
+                <th className="px-4 py-4 text-right font-bold uppercase tracking-wide text-slate-500">
+                  Actions
+                </th>
               </tr>
             </thead>
+
             <tbody className="divide-y divide-slate-100">
               {loading ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
-                    <LoaderCircle className="mx-auto h-6 w-6 animate-spin text-[#D9273B]" />
-                    <p className="mt-2 font-medium">Loading articles...</p>
+                  <td colSpan={8} className="py-16 text-center text-slate-400">
+                    <Loader2 className="mx-auto h-7 w-7 animate-spin text-[#D9273B]" />
+                    <p className="mt-3 font-semibold text-slate-600">
+                      Loading newsroom posts…
+                    </p>
                   </td>
                 </tr>
               ) : posts.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-12 text-center text-slate-400">
-                    <FileText className="mx-auto h-8 w-8 text-slate-300" />
-                    <p className="mt-2 font-medium text-slate-600">
-                      No posts found
+                  <td colSpan={8} className="py-16 text-center text-slate-400">
+                    <div className="mx-auto grid h-14 w-14 place-items-center rounded-2xl bg-slate-100 text-slate-400">
+                      <Search size={26} />
+                    </div>
+                    <h3 className="mt-4 text-base font-bold text-[#10243D]">
+                      No news articles found
+                    </h3>
+                    <p className="mt-1 text-xs text-slate-500">
+                      Try adjusting your filters or create a new story.
                     </p>
-                    <p className="text-[11px] text-slate-400">
-                      {search
-                        ? "Try adjusting your search or filters."
-                        : "Click 'Create New Post' to publish your first article."}
-                    </p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedPostId(null);
+                        setView("editor");
+                      }}
+                      className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-[#D9273B] px-4 py-2 text-xs font-bold text-white hover:bg-[#b81f30]"
+                    >
+                      <Plus size={15} />
+                      <span>Create Post</span>
+                    </button>
                   </td>
                 </tr>
               ) : (
                 posts.map((post) => {
                   const isChecked = selectedIds.includes(post.id);
-                  const isPublishing = actionId === post.id;
+                  const isOperating = actionLoading === `post-${post.id}`;
+                  const imageSrc = post.featured_image || post.featured_image_url;
 
                   return (
                     <tr
                       key={post.id}
-                      className={`transition-colors hover:bg-slate-50/70 ${
-                        isChecked ? "bg-rose-50/20" : ""
+                      className={`group transition-colors hover:bg-slate-50/70 ${
+                        isChecked ? "bg-red-50/20" : "bg-white"
                       }`}
                     >
-                      <td className="px-4 py-3">
+                      <td className="px-5 py-4 align-middle">
                         <input
                           type="checkbox"
                           checked={isChecked}
-                          onChange={() => toggleSelect(post.id)}
+                          onChange={() => togglePostSelection(post.id)}
                           className="h-4 w-4 rounded border-slate-300 text-[#D9273B] focus:ring-[#D9273B]"
                         />
                       </td>
 
-                      <td className="max-w-[280px] px-4 py-3">
-                        <div className="flex items-center gap-3">
-                          {post.featured_image ? (
-                            <img
-                              src={post.featured_image}
-                              alt=""
-                              className="h-10 w-12 shrink-0 rounded-md object-cover"
-                            />
-                          ) : (
-                            <div className="grid h-10 w-12 shrink-0 place-items-center rounded-md bg-slate-100 text-slate-300">
-                              <ImageOff className="h-4 w-4" />
-                            </div>
-                          )}
-                          <div className="min-w-0">
-                            <p
-                              className="truncate font-semibold text-[#10243D] hover:underline cursor-pointer"
-                              onClick={() => handleOpenEdit(post)}
+                      {/* Post Thumbnail & Headline */}
+                      <td className="max-w-[380px] px-4 py-4 align-middle">
+                        <div className="flex items-start gap-3">
+                          <div className="flex h-14 w-20 shrink-0 items-center justify-center overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                            {imageSrc ? (
+                              <img
+                                src={imageSrc}
+                                alt=""
+                                className="h-full w-full object-cover"
+                              />
+                            ) : (
+                              <ImageOff size={18} className="text-slate-400" />
+                            )}
+                          </div>
+
+                          <div className="min-w-0 flex-1">
+                            <h3
+                              onClick={() => {
+                                setSelectedPostId(post.id);
+                                setView("preview");
+                              }}
+                              className="line-clamp-2 cursor-pointer text-xs font-bold leading-5 text-[#10243D] transition hover:text-[#D9273B] hover:underline"
                               title={post.title}
                             >
-                              {post.title}
+                              {post.title || "Untitled draft"}
+                            </h3>
+
+                            <p className="mt-0.5 line-clamp-1 text-[11px] text-slate-500">
+                              {post.summary || post.short_description || "No excerpt added."}
                             </p>
-                            <p className="truncate text-[10px] text-slate-400">
-                              /{post.slug}
-                            </p>
+
+                            {/* Tags: Featured, Breaking News */}
+                            <div className="mt-1.5 flex flex-wrap gap-1">
+                              {post.is_breaking_news && (
+                                <span className="inline-flex items-center gap-0.5 rounded-full bg-rose-50 px-2 py-0.2 text-[9px] font-bold text-rose-700">
+                                  <Zap size={10} className="fill-rose-700" />
+                                  Breaking
+                                </span>
+                              )}
+                              {post.is_featured && (
+                                <span className="inline-flex items-center gap-0.5 rounded-full bg-amber-50 px-2 py-0.2 text-[9px] font-bold text-amber-700">
+                                  <Star size={10} className="fill-amber-700" />
+                                  Featured
+                                </span>
+                              )}
+                            </div>
                           </div>
                         </div>
                       </td>
 
-                      <td className="whitespace-nowrap px-4 py-3 font-medium text-slate-700">
+                      {/* Category */}
+                      <td className="whitespace-nowrap px-4 py-4 align-middle font-medium text-slate-700">
                         {post.category ? (
-                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-semibold text-slate-700">
+                          <span className="rounded-md border border-slate-200 bg-white px-2 py-0.5 text-[11px] font-semibold text-slate-700">
                             {post.category.name}
                           </span>
                         ) : (
@@ -743,134 +1271,193 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
                         )}
                       </td>
 
-                      <td className="whitespace-nowrap px-4 py-3 text-slate-600">
-                        {post.author?.display_name || "Admin"}
-                      </td>
-
-                      <td className="whitespace-nowrap px-4 py-3">
+                      {/* Status */}
+                      <td className="whitespace-nowrap px-4 py-4 align-middle">
                         <span
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-bold ${
+                          className={`inline-flex rounded-full border px-2.5 py-0.5 text-[10px] font-bold ${
                             post.status === "PUBLISHED"
-                              ? "bg-emerald-100 text-emerald-700"
+                              ? "border-emerald-200 bg-emerald-50 text-emerald-700"
                               : post.status === "DRAFT"
-                                ? "bg-amber-100 text-amber-700"
+                                ? "border-amber-200 bg-amber-50 text-amber-700"
                                 : post.status === "SCHEDULED"
-                                  ? "bg-sky-100 text-sky-700"
-                                  : "bg-slate-100 text-slate-700"
+                                  ? "border-sky-200 bg-sky-50 text-sky-700"
+                                  : "border-slate-200 bg-slate-50 text-slate-700"
                           }`}
                         >
-                          {post.status}
+                          {getPostStatusLabel(post.status)}
                         </span>
-                      </td>
-
-                      <td className="whitespace-nowrap px-4 py-3">
-                        <div className="flex items-center gap-1.5">
-                          {/* Featured toggle */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleFeatured(post)}
-                            title={
-                              post.is_featured
-                                ? "Featured article"
-                                : "Click to mark as featured"
-                            }
-                            className={`rounded p-1 transition ${
-                              post.is_featured
-                                ? "text-amber-500 hover:text-amber-600"
-                                : "text-slate-300 hover:text-slate-400"
-                            }`}
-                          >
-                            <Star
-                              className={`h-4 w-4 ${post.is_featured ? "fill-amber-500" : ""}`}
-                            />
-                          </button>
-
-                          {/* Breaking news toggle */}
-                          <button
-                            type="button"
-                            onClick={() => handleToggleBreaking(post)}
-                            title={
-                              post.is_breaking_news
-                                ? "Breaking News"
-                                : "Click to mark Breaking News"
-                            }
-                            className={`rounded p-1 transition ${
-                              post.is_breaking_news
-                                ? "text-rose-600 hover:text-rose-700"
-                                : "text-slate-300 hover:text-slate-400"
-                            }`}
-                          >
-                            <Zap
-                              className={`h-4 w-4 ${post.is_breaking_news ? "fill-rose-600" : ""}`}
-                            />
-                          </button>
-                        </div>
-                      </td>
-
-                      <td className="whitespace-nowrap px-4 py-3 text-[11px] text-slate-500">
-                        {formatDate(
-                          post.status === "PUBLISHED"
-                            ? post.published_at
-                            : post.created_at,
+                        {post.scheduled_at && (
+                          <p className="mt-1 flex items-center gap-1 text-[10px] text-slate-400">
+                            <CalendarClock size={11} />
+                            <span>{formatDate(post.scheduled_at)}</span>
+                          </p>
                         )}
                       </td>
 
-                      <td className="whitespace-nowrap px-4 py-3 text-right">
+                      {/* Author */}
+                      <td className="whitespace-nowrap px-4 py-4 align-middle">
+                        <UserCell user={post.author} />
+                      </td>
+
+                      {/* Created */}
+                      <td className="whitespace-nowrap px-4 py-4 align-middle text-slate-500">
+                        {formatDate(post.created_at)}
+                      </td>
+
+                      {/* Updated */}
+                      <td className="whitespace-nowrap px-4 py-4 align-middle text-slate-500">
+                        {formatDate(post.updated_at)}
+                      </td>
+
+                      {/* Actions */}
+                      <td className="whitespace-nowrap px-4 py-4 text-right align-middle">
                         <div className="flex items-center justify-end gap-1">
-                          {/* Publish/Unpublish toggle */}
+                          {/* View details */}
                           <button
                             type="button"
-                            onClick={() => handleTogglePublish(post)}
-                            disabled={isPublishing}
-                            className={`rounded px-2 py-1 text-[10px] font-semibold transition ${
-                              post.status === "PUBLISHED"
-                                ? "bg-amber-50 text-amber-700 hover:bg-amber-100"
-                                : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
-                            }`}
-                            title={
-                              post.status === "PUBLISHED"
-                                ? "Unpublish to draft"
-                                : "Publish article immediately"
-                            }
+                            title="View / Details"
+                            onClick={() => {
+                              setSelectedPostId(post.id);
+                              setView("preview");
+                            }}
+                            className="rounded-lg p-1.5 text-slate-500 hover:bg-slate-100 hover:text-[#10243D]"
                           >
-                            {isPublishing
-                              ? "..."
-                              : post.status === "PUBLISHED"
-                                ? "Unpublish"
-                                : "Publish"}
+                            <Eye size={16} />
                           </button>
 
-                          {/* Edit button */}
+                          {/* Mobile Phone Simulator */}
                           <button
                             type="button"
-                            onClick={() => handleOpenEdit(post)}
-                            className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-[#10243D]"
+                            title="Mobile phone feed preview"
+                            onClick={() => {
+                              setSelectedPostId(post.id);
+                              setView("preview");
+                            }}
+                            className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-[#D9273B]"
+                          >
+                            <Smartphone size={16} />
+                          </button>
+
+                          {/* Edit Post */}
+                          <button
+                            type="button"
                             title="Edit Post"
+                            onClick={() => {
+                              setSelectedPostId(post.id);
+                              setView("editor");
+                            }}
+                            className="rounded-lg p-1.5 text-slate-500 hover:bg-sky-50 hover:text-sky-700"
                           >
-                            <Pencil className="h-3.5 w-3.5" />
+                            <Pencil size={16} />
                           </button>
 
-                          {/* Duplicate button */}
-                          <button
-                            type="button"
-                            onClick={() => handleDuplicate(post)}
-                            className="rounded p-1 text-slate-500 hover:bg-slate-100 hover:text-[#10243D]"
-                            title="Duplicate as Draft"
-                          >
-                            <Copy className="h-3.5 w-3.5" />
-                          </button>
+                          {/* Quick Publish / Unpublish */}
+                          {!post.is_deleted && !post.deleted_at && statusFilter !== "TRASHED" && (
+                            <button
+                              type="button"
+                              onClick={() => void handleTogglePublish(post)}
+                              disabled={actionLoading === `pub-${post.id}`}
+                              className={`rounded-lg px-2 py-1 text-[10px] font-bold transition ${
+                                post.status === "PUBLISHED"
+                                  ? "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                                  : "bg-emerald-50 text-emerald-700 hover:bg-emerald-100"
+                              }`}
+                            >
+                              {actionLoading === `pub-${post.id}`
+                                ? "…"
+                                : post.status === "PUBLISHED"
+                                  ? "Unpublish"
+                                  : "Publish"}
+                            </button>
+                          )}
 
-                          {/* Move to Trash */}
-                          <button
-                            type="button"
-                            onClick={() =>
-                              setConfirmPost({ type: "trash", post })
-                            }
-                            className="rounded p-1 text-slate-500 hover:bg-rose-50 hover:text-rose-600"
-                            title="Move to Trash"
+                          {/* Row Actions More Menu */}
+                          <div
+                            ref={openRowMenu === post.id ? rowMenuRef : undefined}
+                            className="relative"
                           >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </button>
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setOpenRowMenu((curr) =>
+                                  curr === post.id ? null : post.id,
+                                )
+                              }
+                              className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                            >
+                              <MoreHorizontal size={17} />
+                            </button>
+
+                            {openRowMenu === post.id && (
+                              <div className="absolute right-0 top-9 z-50 w-48 overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedPostId(post.id);
+                                    setView("preview");
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  <Smartphone size={14} />
+                                  <span>Mobile preview</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setSelectedPostId(post.id);
+                                    setView("editor");
+                                  }}
+                                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  <Pencil size={14} />
+                                  <span>Edit story</span>
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => void handleDuplicate(post)}
+                                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                                >
+                                  <Copy size={14} />
+                                  <span>Duplicate draft</span>
+                                </button>
+
+                                <div className="my-1 border-t border-slate-100" />
+
+                                {statusFilter === "TRASHED" ? (
+                                  <>
+                                    <button
+                                      type="button"
+                                      disabled={isOperating}
+                                      onClick={() => void handleTrashOrRestore(post)}
+                                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold text-emerald-600 hover:bg-emerald-50"
+                                    >
+                                      <RotateCcw size={14} />
+                                      <span>Restore post</span>
+                                    </button>
+                                    <button
+                                      type="button"
+                                      disabled={isOperating}
+                                      onClick={() => void handlePermanentDelete(post)}
+                                      className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                                    >
+                                      <Trash2 size={14} />
+                                      <span>Delete permanently</span>
+                                    </button>
+                                  </>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    disabled={isOperating}
+                                    onClick={() => void handleTrashOrRestore(post)}
+                                    className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold text-rose-600 hover:bg-rose-50"
+                                  >
+                                    <Trash2 size={14} />
+                                    <span>Move to trash</span>
+                                  </button>
+                                )}
+                              </div>
+                            )}
+                          </div>
                         </div>
                       </td>
                     </tr>
@@ -881,401 +1468,92 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
           </table>
         </div>
 
-        {/* Pagination Bar */}
-        <div className="flex items-center justify-between border-t border-slate-100 px-4 py-3 text-xs text-slate-600">
-          <p>
-            Showing <span className="font-semibold">{posts.length}</span> of{" "}
-            <span className="font-semibold">{total}</span> articles
-          </p>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.max(1, p - 1))}
-              disabled={page <= 1}
-              className="rounded-lg border border-slate-200 px-3 py-1 font-semibold disabled:opacity-40 hover:bg-slate-50"
+        {/* Pagination Controls */}
+        <div className="flex flex-col gap-4 border-t border-slate-100 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex items-center gap-2.5">
+            <span className="text-xs text-slate-500">Rows per page:</span>
+            <select
+              value={pageSize}
+              onChange={(e) => {
+                setPageSize(Number(e.target.value));
+                setPage(1);
+              }}
+              className="h-8 rounded-lg border border-slate-200 bg-white px-2 text-xs font-semibold text-slate-700 outline-none focus:border-[#D9273B]"
             >
-              Previous
-            </button>
-            <span className="font-medium text-slate-700">
-              Page {page} of {totalPages}
-            </span>
-            <button
-              type="button"
-              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-              disabled={page >= totalPages}
-              className="rounded-lg border border-slate-200 px-3 py-1 font-semibold disabled:opacity-40 hover:bg-slate-50"
-            >
-              Next
-            </button>
+              <option value={10}>10</option>
+              <option value={20}>20</option>
+              <option value={50}>50</option>
+              <option value={100}>100</option>
+            </select>
           </div>
-        </div>
-      </div>
 
-      {/* =================================================================== */}
-      {/* POST EDITOR MODAL                                                   */}
-      {/* =================================================================== */}
-      {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-xs">
-          <div className="flex max-h-[92vh] w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-white shadow-2xl">
-            {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-slate-100 px-6 py-4">
-              <div>
-                <h2 className="text-lg font-bold text-[#10243D]">
-                  {editingPost ? "Edit News Article" : "Create New Post"}
-                </h2>
-                <p className="text-xs text-slate-400">
-                  Fill in the article details, media, and lifecycle status.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setModalOpen(false)}
-                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-              >
-                <X className="h-5 w-5" />
-              </button>
-            </div>
-
-            {/* Modal Body */}
-            <form
-              onSubmit={handleSubmit}
-              className="min-h-0 flex-1 space-y-4 overflow-y-auto p-6 text-xs"
-            >
-              {/* Title */}
-              <div>
-                <label className="block font-semibold text-[#10243D]">
-                  Article Title <span className="text-rose-600">*</span>
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g. Telangana Budget Session Highlights"
-                  value={form.title}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, title: e.target.value }))
-                  }
-                  className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 px-3 text-sm text-[#10243D] outline-none focus:border-[#D9273B]"
-                />
-              </div>
-
-              {/* Category & Status Row */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-                <div>
-                  <label className="block font-semibold text-[#10243D]">
-                    Category
-                  </label>
-                  <select
-                    value={form.category_id}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        category_id: e.target.value,
-                      }))
-                    }
-                    className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-[#D9273B]"
-                  >
-                    <option value="">Select a Category</option>
-                    {categories.map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div>
-                  <label className="block font-semibold text-[#10243D]">
-                    Lifecycle Status
-                  </label>
-                  <select
-                    value={form.status}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        status: e.target.value as PostStatus,
-                      }))
-                    }
-                    className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 bg-white px-3 text-xs outline-none focus:border-[#D9273B]"
-                  >
-                    <option value="DRAFT">Draft</option>
-                    <option value="PUBLISHED">Published</option>
-                    <option value="SCHEDULED">Scheduled</option>
-                  </select>
-                </div>
-              </div>
-
-              {/* Scheduled Date (if SCHEDULED) */}
-              {form.status === "SCHEDULED" && (
-                <div>
-                  <label className="block font-semibold text-[#10243D]">
-                    Schedule Publication Time
-                  </label>
-                  <input
-                    type="datetime-local"
-                    value={form.scheduled_at}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        scheduled_at: e.target.value,
-                      }))
-                    }
-                    className="mt-1.5 h-10 w-full rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-[#D9273B]"
-                  />
-                  <p className="mt-1 text-[11px] text-slate-400">
-                    The article will remain scheduled until this time.
-                  </p>
-                </div>
-              )}
-
-              {/* Summary */}
-              <div>
-                <label className="block font-semibold text-[#10243D]">
-                  Short Summary / Excerpt
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="A concise 1-2 sentence overview shown in feeds and social cards."
-                  value={form.summary}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, summary: e.target.value }))
-                  }
-                  className="mt-1.5 w-full rounded-lg border border-slate-200 p-3 text-xs text-[#10243D] outline-none focus:border-[#D9273B]"
-                />
-              </div>
-
-              {/* Content */}
-              <div>
-                <label className="block font-semibold text-[#10243D]">
-                  Main Content (HTML / Text)
-                </label>
-                <textarea
-                  rows={6}
-                  placeholder="Write full news article content..."
-                  value={form.content}
-                  onChange={(e) =>
-                    setForm((prev) => ({ ...prev, content: e.target.value }))
-                  }
-                  className="mt-1.5 w-full rounded-lg border border-slate-200 p-3 font-mono text-xs text-[#10243D] outline-none focus:border-[#D9273B]"
-                />
-              </div>
-
-              {/* Featured Image */}
-              <div>
-                <label className="block font-semibold text-[#10243D]">
-                  Featured Image
-                </label>
-                <div className="mt-1.5 flex flex-col gap-2 sm:flex-row sm:items-center">
-                  <input
-                    type="text"
-                    placeholder="Image URL (or upload from your computer below)"
-                    value={form.featured_image}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        featured_image: e.target.value,
-                      }))
-                    }
-                    className="h-10 flex-1 rounded-lg border border-slate-200 px-3 text-xs outline-none focus:border-[#D9273B]"
-                  />
-
-                  <div className="flex items-center gap-2">
-                    <input
-                      ref={fileInputRef}
-                      type="file"
-                      accept="image/jpeg,image/png,image/webp"
-                      onChange={handleImageFileChange}
-                      className="hidden"
-                      id="post-image-file"
-                    />
-                    <label
-                      htmlFor="post-image-file"
-                      className="flex h-10 cursor-pointer items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 font-semibold text-slate-700 hover:bg-slate-100"
-                    >
-                      {uploadingImage ? (
-                        <LoaderCircle className="h-4 w-4 animate-spin text-[#D9273B]" />
-                      ) : (
-                        <Upload className="h-4 w-4 text-slate-500" />
-                      )}
-                      <span>{uploadingImage ? "Uploading..." : "Upload File"}</span>
-                    </label>
-                  </div>
-                </div>
-
-                {form.featured_image && (
-                  <div className="mt-2 flex items-center gap-3 rounded-lg border border-slate-100 bg-slate-50 p-2">
-                    <img
-                      src={form.featured_image}
-                      alt="Preview"
-                      className="h-14 w-20 rounded object-cover"
-                    />
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[11px] font-semibold text-slate-700">
-                        {form.featured_image}
-                      </p>
-                      <button
-                        type="button"
-                        onClick={() =>
-                          setForm((prev) => ({ ...prev, featured_image: "" }))
-                        }
-                        className="mt-1 text-[11px] font-semibold text-rose-600 hover:underline"
-                      >
-                        Remove image
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {/* Flags (Featured & Breaking News) */}
-              <div className="flex flex-wrap items-center gap-6 rounded-lg border border-slate-100 bg-[#F8FAFD] p-3">
-                <label className="flex cursor-pointer items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={form.is_featured}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        is_featured: e.target.checked,
-                      }))
-                    }
-                    className="h-4 w-4 rounded border-slate-300 text-[#D9273B] focus:ring-[#D9273B]"
-                  />
-                  <span className="font-semibold text-slate-700">
-                    Mark as Featured Article
-                  </span>
-                </label>
-
-                <label className="flex cursor-pointer items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={form.is_breaking_news}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        is_breaking_news: e.target.checked,
-                      }))
-                    }
-                    className="h-4 w-4 rounded border-slate-300 text-[#D9273B] focus:ring-[#D9273B]"
-                  />
-                  <span className="font-semibold text-slate-700">
-                    Mark as Breaking News
-                  </span>
-                </label>
-              </div>
-
-              {/* SEO Settings */}
-              <div className="space-y-3 rounded-lg border border-slate-100 bg-slate-50/50 p-3">
-                <p className="font-bold text-[#10243D]">SEO Metadata (Optional)</p>
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-600">
-                    SEO Title
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Search engine optimized headline"
-                    value={form.seo_title}
-                    onChange={(e) =>
-                      setForm((prev) => ({ ...prev, seo_title: e.target.value }))
-                    }
-                    className="mt-1 h-8 w-full rounded-md border border-slate-200 bg-white px-2.5 text-xs outline-none focus:border-[#D9273B]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-[11px] font-medium text-slate-600">
-                    SEO Description
-                  </label>
-                  <textarea
-                    rows={2}
-                    placeholder="Search engine snippet"
-                    value={form.seo_description}
-                    onChange={(e) =>
-                      setForm((prev) => ({
-                        ...prev,
-                        seo_description: e.target.value,
-                      }))
-                    }
-                    className="mt-1 w-full rounded-md border border-slate-200 bg-white p-2 text-xs outline-none focus:border-[#D9273B]"
-                  />
-                </div>
-              </div>
-
-              {/* Modal Footer Actions */}
-              <div className="flex items-center justify-end gap-3 border-t border-slate-100 pt-4">
-                <button
-                  type="button"
-                  onClick={() => setModalOpen(false)}
-                  className="rounded-lg border border-slate-200 px-4 py-2 font-semibold text-slate-600 hover:bg-slate-50"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="flex items-center gap-1.5 rounded-lg bg-[#D9273B] px-5 py-2 font-semibold text-white shadow-sm hover:bg-[#b81f30] disabled:opacity-50"
-                >
-                  {saving && (
-                    <LoaderCircle className="h-4 w-4 animate-spin text-white" />
-                  )}
-                  <span>
-                    {saving
-                      ? "Saving..."
-                      : editingPost
-                        ? "Save Changes"
-                        : form.status === "PUBLISHED"
-                          ? "Publish Article"
-                          : "Save as Draft"}
-                  </span>
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* =================================================================== */}
-      {/* CONFIRMATION DIALOG                                                 */}
-      {/* =================================================================== */}
-      {confirmPost && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/50 p-4 backdrop-blur-xs">
-          <div className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl">
-            <div className="flex items-center gap-3 text-rose-600">
-              <div className="grid h-10 w-10 place-items-center rounded-full bg-rose-100">
-                <Trash2 className="h-5 w-5" />
-              </div>
-              <h3 className="text-base font-bold text-[#10243D]">
-                {confirmPost.type === "bulk_trash"
-                  ? "Move Selected to Trash?"
-                  : "Move Post to Trash?"}
-              </h3>
-            </div>
-
-            <p className="mt-3 text-xs text-slate-500 leading-relaxed">
-              {confirmPost.type === "bulk_trash"
-                ? `Are you sure you want to move ${selectedIds.length} posts to Trash? You can restore them anytime from the Posts Trash.`
-                : `Are you sure you want to move "${confirmPost.post?.title}" to Trash? You can restore it anytime.`}
+          <div className="flex items-center gap-3">
+            <p className="text-xs text-slate-500">
+              Page <span className="font-bold text-slate-800">{page}</span> of{" "}
+              <span className="font-bold text-slate-800">{totalPages || 1}</span>
             </p>
 
-            <div className="mt-6 flex justify-end gap-2.5">
-              <button
-                type="button"
-                onClick={() => setConfirmPost(null)}
-                className="rounded-lg border border-slate-200 px-4 py-2 text-xs font-semibold text-slate-600 hover:bg-slate-50"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleConfirmTrash}
-                disabled={saving}
-                className="rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
-              >
-                {saving ? "Moving..." : "Move to Trash"}
-              </button>
-            </div>
+            <button
+              type="button"
+              disabled={page <= 1 || filterLoading}
+              onClick={() => setPage((p) => Math.max(1, p - 1))}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronLeft size={16} />
+            </button>
+
+            <button
+              type="button"
+              disabled={page >= totalPages || filterLoading}
+              onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-600 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              <ChevronRight size={16} />
+            </button>
           </div>
         </div>
-      )}
+      </section>
+
+      {/* =======================================================
+       * FOOTER INFORMATION CARDS (TUPAKI 3-COLUMN FOOTER)
+       * ======================================================= */}
+      <section className="grid gap-4 rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm md:grid-cols-3">
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-[#D9273B]">
+            <UserRound size={19} />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-[#10243D]">Creator tracking</p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-500">
+              Every published post and autosaved draft captures the authenticated creator and author ID.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sky-50 text-sky-700">
+            <Smartphone size={19} />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-[#10243D]">Mobile preview</p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-500">
+              Preview each post as an InShorts-style mobile card before broadcasting to audience feeds.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-start gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+            <FileSpreadsheet size={19} />
+          </div>
+          <div>
+            <p className="text-xs font-bold text-[#10243D]">Filter-aware exports</p>
+            <p className="mt-1 text-[11px] leading-5 text-slate-500">
+              Export news articles to CSV with category and date filters preserved for archiving.
+            </p>
+          </div>
+        </div>
+      </section>
     </div>
   );
 }
