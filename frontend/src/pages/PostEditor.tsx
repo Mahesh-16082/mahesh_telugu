@@ -220,7 +220,18 @@ export default function PostEditor({
     async (silent: boolean = false) => {
       const current = formRef.current;
       if (!current.title.trim()) {
-        if (!silent) showToast("error", "Please provide a title to save a draft.");
+        if (!silent) {
+          showToast("error", "Please provide a title to save a draft.");
+        }
+        return null;
+      }
+
+      // The image is required for drafts as well. During silent autosave,
+      // do not show repeated error notifications while the image is missing.
+      if (!current.featured_image.trim()) {
+        if (!silent) {
+          showToast("error", "Cover & Featured Image is required.");
+        }
         return null;
       }
 
@@ -289,6 +300,29 @@ export default function PostEditor({
     if (!form.title.trim()) {
       showToast("error", "Article headline is required.");
       return;
+    }
+
+    if (!form.category_id) {
+      showToast("error", "Please select a category.");
+      return;
+    }
+
+    if (!form.featured_image.trim()) {
+      showToast("error", "Cover & Featured Image is required.");
+      return;
+    }
+
+    if (form.status === "SCHEDULED") {
+      if (!form.scheduled_at) {
+        showToast("error", "Please select a scheduling date and time.");
+        return;
+      }
+
+      const scheduledTime = new Date(form.scheduled_at).getTime();
+      if (!Number.isFinite(scheduledTime) || scheduledTime <= Date.now()) {
+        showToast("error", "The scheduled time must be in the future.");
+        return;
+      }
     }
 
     setPublishing(true);
@@ -700,6 +734,7 @@ export default function PostEditor({
                 Category <span className="text-rose-600">*</span>
               </label>
               <select
+                required
                 value={form.category_id ?? ""}
                 onChange={(e) =>
                   setField(
@@ -709,7 +744,7 @@ export default function PostEditor({
                 }
                 className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-xs font-medium text-slate-700 outline-none focus:border-[#D9273B]"
               >
-                <option value="">Select category</option>
+                <option value="" disabled>Select category</option>
                 {categories.map((c) => (
                   <option key={c.id} value={c.id}>
                     {c.name}
@@ -807,9 +842,10 @@ export default function PostEditor({
           <div className="space-y-3.5 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
             <h2 className="flex items-center gap-2 text-sm font-bold text-[#10243D]">
               <ImagePlus size={16} className="text-[#D9273B]" />
-              <span>Cover & Featured Image</span>
+              <span>
+                Cover & Featured Image <span className="text-rose-600">*</span>
+              </span>
             </h2>
-
             {form.featured_image ? (
               <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
                 <img
