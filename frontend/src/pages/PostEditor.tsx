@@ -284,17 +284,52 @@ export default function PostEditor({
   }, [saveAsDraft, saveState]);
 
   // Publish / Schedule / Update
+ 
   async function handlePublishSubmit(event: FormEvent) {
     event.preventDefault();
+
+    // Validate all required fields before creating or updating a post.
     if (!form.title.trim()) {
       showToast("error", "Article headline is required.");
       return;
     }
 
+    if (!form.category_id) {
+      showToast("error", "Please select a category.");
+      return;
+    }
+
+    if (!form.summary.trim()) {
+      showToast("error", "Short Summary / Excerpt is required.");
+      return;
+    }
+
+    if (!form.featured_image.trim()) {
+      showToast("error", "Please upload a cover image or enter an image URL.");
+      return;
+    }
+
+    if (form.status === "SCHEDULED" && !form.scheduled_at) {
+      showToast("error", "Please select a scheduled publication date and time.");
+      return;
+    }
+
     setPublishing(true);
     setPageError(null);
+
     try {
-      const targetStatus = form.status === "SCHEDULED" ? "SCHEDULED" : "PUBLISHED";
+      // When editing a published post, the primary action unpublishes it.
+      const isUnpublishing =
+        Boolean(currentPost?.id) &&
+        currentPost?.status === "PUBLISHED" &&
+        form.status === "PUBLISHED";
+
+      const targetStatus: PostStatus = isUnpublishing
+        ? "DRAFT"
+        : form.status === "SCHEDULED"
+          ? "SCHEDULED"
+          : "PUBLISHED";
+
       const payload: PostCreate = {
         title: form.title.trim(),
         slug: form.slug.trim() || undefined,
@@ -323,9 +358,11 @@ export default function PostEditor({
       isDirtyRef.current = false;
       showToast(
         "success",
-        targetStatus === "SCHEDULED"
-          ? "Story scheduled successfully."
-          : "Story published to Telugu Front.",
+        targetStatus === "DRAFT"
+          ? "Story unpublished successfully."
+          : targetStatus === "SCHEDULED"
+            ? "Story scheduled successfully."
+            : "Story published to Telugu Front.",
       );
       if (onSaved) onSaved(result);
       setTimeout(() => onBack(), 700);
@@ -449,7 +486,7 @@ export default function PostEditor({
       {/* =======================================================
        * TOP HEADER BAR
        * ======================================================= */}
-      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm lg:flex-row lg:items-center">
+      <div className="flex flex-col gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm lg:flex-row lg:items-center">
         <button
           type="button"
           onClick={handleBackClick}
@@ -537,10 +574,13 @@ export default function PostEditor({
             )}
             <span>
               {publishing
-                ? "Publishing…"
-                : form.status === "SCHEDULED"
-                  ? "Schedule Story"
-                  : "Publish Story"}
+                ? "Processing…"
+                : currentPost?.status === "PUBLISHED" &&
+                    form.status === "PUBLISHED"
+                  ? "Unpublish"
+                  : form.status === "SCHEDULED"
+                    ? "Schedule Story"
+                    : "Publish Story"}
             </span>
           </button>
         </div>
@@ -558,7 +598,7 @@ export default function PostEditor({
       <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_360px]">
         {/* LEFT COLUMN: ARTICLE CONTENT */}
         <div className="space-y-5">
-          <div className="space-y-5 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
+          <div className="space-y-5 rounded-2xl border border-slate-200 bg-white p-6 shadow-sm">
             {/* Title / Headline */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-3">
@@ -584,37 +624,18 @@ export default function PostEditor({
                 value={form.title}
                 onChange={(e) => setField("title", e.target.value)}
                 placeholder="Enter clear, compelling news headline..."
-                className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50/40 px-4 text-sm font-semibold text-[#10243D] outline-none transition placeholder:font-normal placeholder:text-slate-400 focus:border-[#D9273B] focus:bg-white focus:ring-4 focus:ring-red-100"
+                className="h-12 w-full rounded-xl border border-slate-200 bg-slate-50 px-4 text-sm font-semibold text-[#10243D] outline-none transition placeholder:font-normal placeholder:text-slate-400 focus:border-[#D9273B] focus:bg-white focus:ring-2 focus:ring-red-100"
               />
               <p className="text-[11px] text-slate-400">
                 Keep the headline direct, informative, and optimized for feeds.
               </p>
             </div>
 
-            {/* Slug */}
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#10243D]">
-                URL Slug (Optional)
-              </label>
-              <div className="flex items-center rounded-xl border border-slate-200 bg-slate-50/50 px-3 py-1.5">
-                <span className="text-xs font-medium text-slate-400">
-                  /posts/
-                </span>
-                <input
-                  type="text"
-                  value={form.slug}
-                  onChange={(e) => setField("slug", e.target.value)}
-                  placeholder="auto-generated-from-title"
-                  className="ml-1 h-8 w-full bg-transparent text-xs text-slate-700 outline-none"
-                />
-              </div>
-            </div>
-
             {/* Short Description / Summary */}
             <div className="space-y-1.5">
               <div className="flex items-center justify-between gap-3">
                 <label className="text-xs font-bold text-[#10243D]">
-                  Short Summary / Excerpt
+                  Short Summary / Excerpt <span className="text-rose-600">*</span>
                 </label>
                 <span
                   className={`text-[11px] font-semibold ${
@@ -627,12 +648,13 @@ export default function PostEditor({
                 </span>
               </div>
               <textarea
+                required
                 rows={3}
                 maxLength={DESCRIPTION_MAX_LENGTH}
                 value={form.summary}
                 onChange={(e) => setField("summary", e.target.value)}
                 placeholder="Write a concise 2-3 sentence overview for mobile cards and feeds..."
-                className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50/40 p-3.5 text-xs text-[#10243D] leading-5 outline-none transition placeholder:text-slate-400 focus:border-[#D9273B] focus:bg-white focus:ring-4 focus:ring-red-100"
+                className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-3.5 text-xs text-[#10243D] leading-5 outline-none transition placeholder:text-slate-400 focus:border-[#D9273B] focus:bg-white focus:ring-2 focus:ring-red-100"
               />
               <p className="text-[11px] text-slate-400">
                 This summary appears directly on preview cards and news feeds.
@@ -645,44 +667,12 @@ export default function PostEditor({
                 Full Article Content
               </label>
               <textarea
+                
                 rows={10}
                 value={form.content}
                 onChange={(e) => setField("content", e.target.value)}
                 placeholder="Write full article content (HTML or plain text supported)..."
-                className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50/40 p-4 font-mono text-xs text-[#10243D] leading-6 outline-none transition placeholder:font-sans placeholder:text-slate-400 focus:border-[#D9273B] focus:bg-white focus:ring-4 focus:ring-red-100"
-              />
-            </div>
-          </div>
-
-          {/* SEO Metadata Card */}
-          <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-6 shadow-sm">
-            <h3 className="text-sm font-bold text-[#10243D]">
-              Search Engine Optimization (SEO)
-            </h3>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-700">
-                SEO Meta Title
-              </label>
-              <input
-                type="text"
-                value={form.seo_title}
-                onChange={(e) => setField("seo_title", e.target.value)}
-                placeholder="Custom title tag for search engines..."
-                className="h-10 w-full rounded-xl border border-slate-200 px-3 text-xs text-slate-800 outline-none focus:border-[#D9273B]"
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-700">
-                SEO Meta Description
-              </label>
-              <textarea
-                rows={2}
-                value={form.seo_description}
-                onChange={(e) => setField("seo_description", e.target.value)}
-                placeholder="Meta description snippet for search results..."
-                className="w-full rounded-xl border border-slate-200 p-3 text-xs text-slate-800 outline-none focus:border-[#D9273B]"
+                className="w-full resize-y rounded-xl border border-slate-200 bg-slate-50 p-4 font-mono text-xs text-[#10243D] leading-6 outline-none transition placeholder:font-sans placeholder:text-slate-400 focus:border-[#D9273B] focus:bg-white focus:ring-2 focus:ring-red-100"
               />
             </div>
           </div>
@@ -691,7 +681,7 @@ export default function PostEditor({
         {/* RIGHT COLUMN: PUBLISHING SIDEBAR */}
         <div className="space-y-5">
           {/* Publishing Settings Card */}
-          <div className="space-y-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+          <div className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="text-sm font-bold text-[#10243D]">Publishing</h2>
 
             {/* Category */}
@@ -700,6 +690,7 @@ export default function PostEditor({
                 Category <span className="text-rose-600">*</span>
               </label>
               <select
+                required
                 value={form.category_id ?? ""}
                 onChange={(e) =>
                   setField(
@@ -804,10 +795,10 @@ export default function PostEditor({
           </div>
 
           {/* Featured Image Card */}
-          <div className="space-y-3.5 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm">
+          <div className="space-y-3.5 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm">
             <h2 className="flex items-center gap-2 text-sm font-bold text-[#10243D]">
               <ImagePlus size={16} className="text-[#D9273B]" />
-              <span>Cover & Featured Image</span>
+              <span>Cover & Featured Image <span className="text-red-500">*</span></span>
             </h2>
 
             {form.featured_image ? (
@@ -816,6 +807,7 @@ export default function PostEditor({
                   src={form.featured_image}
                   alt="Featured cover"
                   className="h-44 w-full object-cover"
+                  
                 />
                 <button
                   type="button"

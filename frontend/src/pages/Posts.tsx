@@ -717,12 +717,12 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
       {/* =======================================================
        * NEWSROOM DARK BANNER & METRICS
        * ======================================================= */}
-      <section className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
         {/* Dark Banner */}
-        <div className="relative overflow-hidden bg-[#10243D] px-6 py-7 text-white lg:px-8">
+        <div className="relative overflow-hidden bg-[#10243D] px-5 py-6 text-white sm:px-6 lg:px-7">
           {/* Red Glow Accent */}
-          <div className="absolute -right-16 -top-20 h-64 w-64 rounded-full bg-[#D9273B]/25 blur-3xl" />
-          <div className="absolute bottom-0 right-16 h-24 w-24 rounded-full bg-white/5" />
+          <div className="absolute -right-10 -top-12 h-40 w-40 rounded-full bg-[#D9273B]/15 blur-2xl" />
+          <div className="absolute bottom-0 right-12 h-16 w-16 rounded-full bg-white/5" />
 
           <div className="relative flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
             <div>
@@ -782,7 +782,7 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
                 key={card.label}
                 type="button"
                 onClick={() => handleStatusCardClick(card.status)}
-                className={`rounded-2xl border p-4 text-left transition ${
+                className={`rounded-xl border p-4 text-left transition ${
                   isActive
                     ? `${card.accent} shadow-sm`
                     : "border-slate-200 bg-slate-50 text-slate-700 hover:border-slate-300 hover:bg-white"
@@ -807,7 +807,7 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
       {/* =======================================================
        * SEARCH AND FILTER BAR
        * ======================================================= */}
-      <section className="overflow-hidden rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+      <section className="overflow-hidden rounded-2xl border border-slate-200/80 bg-white shadow-sm">
         <form onSubmit={handleApplyFilters} className="p-4 lg:p-5">
           <div className="flex flex-col gap-3 xl:flex-row xl:items-center">
             {/* Search Input */}
@@ -827,7 +827,7 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
 
             {/* Quick Action Buttons */}
             <div className="flex flex-wrap items-center gap-2">
-              <button
+              {/* <button
                 type="button"
                 onClick={() => setShowFilterAccordion((curr) => !curr)}
                 className={`inline-flex h-11 items-center gap-1.5 rounded-2xl border px-3.5 text-xs font-bold transition ${
@@ -871,7 +871,7 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
               >
                 <CalendarClock size={15} />
                 <span>Last 24 Hours</span>
-              </button>
+              </button> */}
 
               <button
                 type="button"
@@ -882,14 +882,14 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
                 <span>Show All</span>
               </button>
 
-              <button
+              {/* <button
                 type="button"
                 onClick={handleResetFilters}
                 className="inline-flex h-11 items-center gap-1.5 rounded-2xl border border-slate-200 bg-white px-3.5 text-xs font-semibold text-slate-600 transition hover:bg-slate-50"
               >
                 <RotateCcw size={15} />
                 <span>Reset</span>
-              </button>
+              </button> */}
             </div>
           </div>
 
@@ -994,7 +994,7 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
       {/* =======================================================
        * POSTS TABLE & TOOLBAR
        * ======================================================= */}
-      <section className="overflow-visible rounded-3xl border border-slate-200/80 bg-white shadow-sm">
+      <section className="overflow-visible rounded-2xl border border-slate-200/80 bg-white shadow-sm">
         {/* Table Top Toolbar */}
         <div className="flex flex-col gap-3 border-b border-slate-100 px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -1325,19 +1325,6 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
                             <Eye size={16} />
                           </button>
 
-                          {/* Mobile Phone Simulator */}
-                          <button
-                            type="button"
-                            title="Mobile phone feed preview"
-                            onClick={() => {
-                              setSelectedPostId(post.id);
-                              setView("preview");
-                            }}
-                            className="rounded-lg p-1.5 text-slate-500 hover:bg-red-50 hover:text-[#D9273B]"
-                          >
-                            <Smartphone size={16} />
-                          </button>
-
                           {/* Edit Post */}
                           <button
                             type="button"
@@ -1390,17 +1377,7 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
 
                             {openRowMenu === post.id && (
                               <div className="absolute right-0 top-9 z-50 w-48 overflow-hidden rounded-2xl border border-slate-200 bg-white p-1.5 shadow-xl">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedPostId(post.id);
-                                    setView("preview");
-                                  }}
-                                  className="flex w-full items-center gap-2 rounded-xl px-3 py-2 text-left text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                                >
-                                  <Smartphone size={14} />
-                                  <span>Mobile preview</span>
-                                </button>
+                  
                                 <button
                                   type="button"
                                   onClick={() => {
@@ -1517,7 +1494,7 @@ export default function Posts({ mode = "all", onNavigate: _onNavigate }: PostsPr
       {/* =======================================================
        * FOOTER INFORMATION CARDS (TUPAKI 3-COLUMN FOOTER)
        * ======================================================= */}
-      <section className="grid gap-4 rounded-3xl border border-slate-200/80 bg-white p-5 shadow-sm md:grid-cols-3">
+      <section className="grid gap-4 rounded-2xl border border-slate-200/80 bg-white p-5 shadow-sm md:grid-cols-3">
         <div className="flex items-start gap-3">
           <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-red-50 text-[#D9273B]">
             <UserRound size={19} />
