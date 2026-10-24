@@ -11,7 +11,7 @@ from app.models.user import User
 from app.routers.auth import router as auth_router
 from app.routers.posts import router as posts_router
 from app.routers.categories import router as categories_router
-
+from app.routers.breaking_news import router as breaking_news_router
 
 def bootstrap_admin() -> None:
     """Create the configured master admin if the account doesn't exist."""
@@ -61,6 +61,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(posts_router)
 app.include_router(categories_router)
+app.include_router(breaking_news_router)
 
 @app.get("/")
 def root():
