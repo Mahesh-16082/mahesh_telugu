@@ -9,7 +9,7 @@ from app.cors.database import Base
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
-
+#its is a class
 class Category(Base):
     __tablename__ = "categories"
 
