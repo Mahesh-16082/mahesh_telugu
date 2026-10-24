@@ -10,7 +10,7 @@ from app.main import app
 from app.cors.database import Base
 from app.deps import get_db, get_current_user
 
-# Import models so SQLAlchemy registers their tables.
+
 from app.models.user import User
 from app.models.post import Post
 from app.models.breaking_news import BreakingNews
